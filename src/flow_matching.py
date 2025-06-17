@@ -1,0 +1,406 @@
+import math
+from typing import Literal, Optional
+
+import matplotlib.pyplot as plt
+import pytorch_lightning as pl
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from pytorch_lightning.callbacks import Callback
+from sklearn.datasets import make_moons
+from torch.optim import Adam
+from torch.utils.data import DataLoader, TensorDataset
+
+
+class MetricTracker(Callback):
+    def __init__(self):
+        self.train_losses = []
+        self.val_losses = []
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        loss = trainer.callback_metrics.get("train_loss")
+        if loss is not None:
+            self.train_losses.append(loss.item())
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        loss = trainer.callback_metrics.get("val_loss")
+        if loss is not None:
+            self.val_losses.append(loss.item())
+
+
+class FlowMatchingMLP(nn.Module):
+    """
+    Simple MLP architecture for the vector field network v_θ(x, t).
+
+    The vector field v_θ(x, t) approximates the conditional vector field
+    u_t(x) = d/dt φ_t(x) where φ_t is the flow map from noise to data.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int = 256,
+        num_layers: int = 3,
+        time_embed_dim: int = 128,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.time_embed_dim = time_embed_dim
+
+        # Sinusoidal time embedding (similar to diffusion models)
+        self.time_mlp = nn.Sequential(
+            nn.Linear(time_embed_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+        # Main network layers
+        layers = [nn.Linear(dim + hidden_dim, hidden_dim)]
+        for _ in range(num_layers - 1):
+            layers.extend([nn.SiLU(), nn.Linear(hidden_dim, hidden_dim)])
+        layers.extend([nn.SiLU(), nn.Linear(hidden_dim, dim)])
+
+        self.net = nn.Sequential(*layers)
+
+    def get_timestep_embedding(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """
+        Sinusoidal positional embeddings for time.
+
+        Uses sinusoidal functions sin(t/10000^(2i/d)) and cos(t/10000^(2i/d))
+        to encode time information in a way that's smooth and periodic.
+        """
+        half_dim = self.time_embed_dim // 2
+        emb = math.log(10000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=timesteps.device) * -emb)
+        emb = timesteps[:, None] * emb[None, :]
+        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
+        return emb
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the vector field network.
+
+        Args:
+            x: Input tensor of shape (batch_size, dim)
+            t: Time tensor of shape (batch_size,)
+
+        Returns:
+            Vector field v_θ(x, t) of shape (batch_size, dim)
+        """
+        t_emb = self.get_timestep_embedding(t)
+        t_emb = self.time_mlp(t_emb)
+
+        # Concatenate spatial and temporal features
+        h = torch.cat([x, t_emb], dim=-1)
+        return self.net(h)
+
+
+class FlowMatching(pl.LightningModule):
+    """
+    Flow Matching implementation following Lipman et al. (2023).
+
+    Mathematical Foundation:
+    Flow Matching learns a vector field v_θ(x, t) that generates a continuous
+    normalizing flow (CNF) from a simple prior p_0 (e.g., Gaussian) to the
+    target data distribution p_1.
+
+    The key insight is to match the vector field to the conditional vector field:
+    u_t(x) = (x_1 - x_0) where x_t = (1-t)x_0 + tx_1 (linear interpolation)
+
+    This avoids the expensive computation of the log-determinant Jacobian
+    required in standard CNFs.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        hidden_dim: int = 256,
+        num_layers: int = 3,
+        lr: float = 1e-3,
+        sigma: float = 0.1,
+        ode_solver: Literal["euler", "rk4"] = "euler",
+        num_steps: int = 100,
+    ):
+        super().__init__()
+        self.save_hyperparameters()
+
+        self.dim = dim
+        self.sigma = sigma  # Noise level for conditional flow matching
+        self.ode_solver = ode_solver
+        self.num_steps = num_steps
+
+        # Vector field network v_θ(x, t)
+        self.vector_field = FlowMatchingMLP(dim, hidden_dim, num_layers)
+
+    def conditional_vector_field(
+        self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute the target conditional vector field u_t(x).
+
+        Mathematical Derivation:
+        For the linear interpolant x_t = (1-t)x_0 + tx_1, we have:
+        u_t(x) = d/dt x_t = x_1 - x_0
+
+        This is the velocity field that transforms x_0 to x_1 linearly.
+
+        Args:
+            x_t: Interpolated samples at time t
+            x_1: Target data samples
+            x_0: Source noise samples
+            t: Time values
+
+        Returns:
+            Conditional vector field u_t(x)
+        """
+        return x_1 - x_0
+
+    def sample_interpolant(
+        self, x_0: torch.Tensor, x_1: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Sample from the interpolating path between x_0 and x_1.
+
+        Mathematical Context:
+        We use the linear interpolant: x_t = (1-t)x_0 + tx_1
+        This creates a straight-line path in data space from noise to data.
+
+        Alternative interpolants (e.g., trigonometric) can be used but
+        linear interpolation is simple and empirically effective.
+        """
+        t = t.view(-1, *([1] * (x_0.dim() - 1)))  # Broadcast time dimension
+        return (1 - t) * x_0 + t * x_1
+
+    def flow_matching_loss(self, x_1: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the Flow Matching loss.
+
+        Mathematical Formulation:
+        L_FM(θ) = E_{t~U[0,1], x_0~p_0, x_1~p_1} [||v_θ(x_t, t) - u_t(x_t)||²]
+
+        where:
+        - t ~ U[0,1]: uniform time sampling
+        - x_0 ~ p_0: samples from prior (Gaussian noise)
+        - x_1 ~ p_1: samples from data distribution
+        - x_t = (1-t)x_0 + tx_1: interpolant
+        - u_t(x_t) = x_1 - x_0: target vector field
+
+        This loss trains the network to predict the direction from noise to data.
+        """
+        batch_size = x_1.shape[0]
+        device = x_1.device
+
+        # Sample uniform time t ∈ [0, 1]
+        t = torch.rand(batch_size, device=device)
+
+        # Sample from prior p_0 (standard Gaussian with added noise)
+        # Mathematical note: Adding σ·ε provides stability and prevents
+        # the model from overfitting to exact interpolation paths
+        x_0 = torch.randn_like(x_1)
+        if self.sigma > 0:
+            x_0 = x_0 + self.sigma * torch.randn_like(x_1)
+
+        # Compute interpolant x_t = (1-t)x_0 + tx_1
+        x_t = self.sample_interpolant(x_0, x_1, t)
+
+        # Predict vector field v_θ(x_t, t)
+        v_pred = self.vector_field(x_t, t)
+
+        # Compute target vector field u_t(x_t) = x_1 - x_0
+        v_target = self.conditional_vector_field(x_t, x_1, x_0, t)
+
+        # MSE loss between predicted and target vector fields
+        loss = F.mse_loss(v_pred, v_target)
+
+        return loss
+
+    def euler_step(self, x: torch.Tensor, t: float, dt: float) -> torch.Tensor:
+        """
+        Single Euler integration step.
+
+        Mathematical Formulation:
+        x_{n+1} = x_n + dt * v_θ(x_n, t_n)
+
+        This is the simplest numerical ODE solver with O(dt) local error.
+        Fast but less accurate than higher-order methods.
+        """
+        t_tensor = torch.full((x.shape[0],), t, device=x.device, dtype=x.dtype)
+        v = self.vector_field(x, t_tensor)
+        return x + dt * v
+
+    def rk4_step(self, x: torch.Tensor, t: float, dt: float) -> torch.Tensor:
+        """
+        Single RK4 (Runge-Kutta 4th order) integration step.
+
+        Mathematical Formulation:
+        k1 = v_θ(x_n, t_n)
+        k2 = v_θ(x_n + dt/2 * k1, t_n + dt/2)
+        k3 = v_θ(x_n + dt/2 * k2, t_n + dt/2)
+        k4 = v_θ(x_n + dt * k3, t_n + dt)
+        x_{n+1} = x_n + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+
+        This 4th-order method has O(dt^4) local error, making it much more
+        accurate than Euler for smooth vector fields, at the cost of 4x
+        more function evaluations per step.
+        """
+
+        def get_v(x_curr, t_curr):
+            t_tensor = torch.full(
+                (x_curr.shape[0],), t_curr, device=x_curr.device, dtype=x_curr.dtype
+            )
+            return self.vector_field(x_curr, t_tensor)
+
+        k1 = get_v(x, t)
+        k2 = get_v(x + dt / 2 * k1, t + dt / 2)
+        k3 = get_v(x + dt / 2 * k2, t + dt / 2)
+        k4 = get_v(x + dt * k3, t + dt)
+
+        return x + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    def sample(
+        self, num_samples: int, device: Optional[torch.device] = None
+    ) -> torch.Tensor:
+        """
+        Generate samples by solving the ODE dx/dt = v_θ(x, t) from t=0 to t=1.
+
+        Mathematical Context:
+        Starting from x_0 ~ p_0 (prior), we integrate the learned vector field:
+        dx/dt = v_θ(x, t) for t ∈ [0, 1]
+
+        This transforms samples from the prior to the data distribution.
+        The choice of ODE solver affects accuracy vs. computational cost:
+        - Euler: Fast, O(dt) error, good for real-time applications
+        - RK4: Slower, O(dt^4) error, better for high-quality samples
+        """
+        if device is None:
+            device = next(self.parameters()).device
+
+        # Start from prior samples x_0 ~ N(0, I)
+        x = torch.randn(num_samples, self.dim, device=device)
+
+        # Integration parameters
+        dt = 1.0 / self.num_steps
+
+        # Choose integration method
+        if self.ode_solver == "euler":
+            step_fn = self.euler_step
+        elif self.ode_solver == "rk4":
+            step_fn = self.rk4_step
+        else:
+            raise ValueError(f"Unknown ODE solver: {self.ode_solver}")
+
+        # Integrate from t=0 to t=1
+        with torch.no_grad():
+            for i in range(self.num_steps):
+                t = i * dt
+                x = step_fn(x, t, dt)
+
+        return x
+
+    def training_step(self, batch, batch_idx):
+        """Training step - compute flow matching loss."""
+        x_1 = batch[0] if isinstance(batch, (list, tuple)) else batch
+        loss = self.flow_matching_loss(x_1)
+
+        self.log("train_loss", loss, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        """Validation step - compute flow matching loss."""
+        x_1 = batch[0] if isinstance(batch, (list, tuple)) else batch
+        loss = self.flow_matching_loss(x_1)
+
+        self.log("val_loss", loss, prog_bar=True)
+        return loss
+
+    def configure_optimizers(self):
+        """Configure Adam optimizer."""
+        return Adam(self.parameters(), lr=self.hparams.lr)
+
+
+def create_2d_dataset(n_samples=10000):
+    # Create mixture of 4 Gaussians in 2D
+    centers = torch.tensor([[-2, -2], [-2, 2], [2, -2], [2, 2]], dtype=torch.float32)
+    n_per_cluster = n_samples // 4
+
+    data = []
+    for center in centers:
+        cluster_data = torch.randn(n_per_cluster, 2) * 0.5 + center
+        data.append(cluster_data)
+
+    return torch.cat(data, dim=0)
+
+
+def create_two_moons_data(n_samples):
+    X, _ = make_moons(n_samples=n_samples, noise=0.1, random_state=42)
+    return torch.FloatTensor(X)
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Initialize model
+    model = FlowMatching(
+        dim=2,
+        hidden_dim=256,
+        num_layers=10,
+        lr=2e-3,
+        sigma=0.1,
+        ode_solver="rk4",  # Try "euler" or "rk4"
+        num_steps=100,
+    )
+
+    # Create sample data
+    X_train = create_two_moons_data(8000)
+
+    # Define a simple PyTorch Lightning DataLoader
+    dataset = TensorDataset(X_train)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=True, num_workers=0)
+
+    # Initialize PyTorch Lightning Trainer and fit the model
+    tracker = MetricTracker()
+    trainer = pl.Trainer(
+        max_epochs=500,
+        callbacks=[tracker],
+        accelerator="auto",
+        log_every_n_steps=10,
+        gradient_clip_val=1.0,
+    )
+    trainer.fit(model, dataloader)
+
+    # Generate samples
+    samples = model.sample(num_samples=2000)
+
+    X = X_train.cpu().numpy()  # Move original data to CPU for plotting
+    samples = samples.cpu().numpy()  # Move generated samples to CPU for plotting
+
+    # Plot results
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+
+    # Original data
+    ax1.scatter(X[:, 0], X[:, 1], alpha=0.6, s=20)
+    ax1.set_title("Original Data")
+    ax1.set_aspect("equal")
+
+    # Generated samples
+    ax2.scatter(samples[:, 0], samples[:, 1], alpha=0.6, s=20, color="red")
+    ax2.set_title("Generated Samples")
+    ax2.set_aspect("equal")
+
+    # Training loss
+    ax3.plot(tracker.train_losses)
+    ax3.set_title("Training loss")
+    ax3.set_xlabel("Epoch")
+    ax3.set_ylabel("Loss")
+
+    # Comparison
+    ax4.scatter(X[:, 0], X[:, 1], alpha=0.4, s=20, label="Original", color="blue")
+    ax4.scatter(
+        samples[:, 0], samples[:, 1], alpha=0.4, s=20, label="Generated", color="red"
+    )
+    ax4.set_title("Comparison")
+    ax4.legend()
+    ax4.set_aspect("equal")
+
+    plt.tight_layout()
+    plt.savefig("flow_matching_results.png", dpi=300)
+    plt.show()
