@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning.callbacks import Callback
 from sklearn.datasets import make_moons
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -315,7 +315,7 @@ class FlowMatching(pl.LightningModule):
 
     def configure_optimizers(self):
         """Configure Adam optimizer."""
-        return Adam(self.parameters(), lr=self.hparams.lr)
+        return AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=1e-3)
 
 
 def create_2d_dataset(n_samples=10000):

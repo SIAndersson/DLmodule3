@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning.callbacks import Callback
 from sklearn.datasets import make_moons
-from torch.optim import Adam
+from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -32,7 +32,7 @@ class SimpleUNet(nn.Module):
     at timestep t, enabling reverse diffusion: x_{t-1} = μ_θ(x_t, t) + σ_t z
     """
 
-    def __init__(self, input_dim, hidden_dim=128, time_embed_dim=32):
+    def __init__(self, input_dim, hidden_dim=128, time_embed_dim=32, num_layers=4):
         super().__init__()
         self.input_dim = input_dim
         self.time_embed_dim = time_embed_dim
@@ -46,15 +46,12 @@ class SimpleUNet(nn.Module):
         )
 
         # Main network: predicts noise ε given noisy input x_t and timestep t
-        self.net = nn.Sequential(
-            nn.Linear(input_dim + hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, input_dim),
-        )
+        layers = [nn.Linear(input_dim + hidden_dim, hidden_dim)]
+        for _ in range(num_layers - 1):
+            layers.extend([nn.ReLU(), nn.Linear(hidden_dim, hidden_dim)])
+        layers.extend([nn.ReLU(), nn.Linear(hidden_dim, input_dim)])
+
+        self.net = nn.Sequential(*layers)
 
     def get_time_embedding(self, timesteps):
         """
@@ -110,14 +107,22 @@ class DiffusionModel(pl.LightningModule):
     L = E_{x_0, ε, t} [||ε - ε_θ(√(α̅_t) x_0 + √(1-α̅_t) ε, t)||^2]
     """
 
-    def __init__(self, input_dim, num_timesteps=1000, lr=1e-3):
+    def __init__(
+        self,
+        input_dim,
+        num_timesteps=1000,
+        lr=1e-3,
+        hidden_dim=128,
+        num_layers=4,
+        time_embed_dim=32,
+    ):
         super().__init__()
         self.input_dim = input_dim
         self.num_timesteps = num_timesteps
         self.lr = lr
 
         # Initialize the denoising network
-        self.model = SimpleUNet(input_dim)
+        self.model = SimpleUNet(input_dim, hidden_dim, time_embed_dim, num_layers)
 
         # Pre-compute diffusion schedule parameters
         self.register_buffer("betas", self._cosine_beta_schedule(num_timesteps))
@@ -209,7 +214,7 @@ class DiffusionModel(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return Adam(self.parameters(), lr=self.lr)
+        return AdamW(self.parameters(), lr=self.lr, weight_decay=1e-3)
 
     @torch.no_grad()
     def p_sample(self, x, t):
@@ -301,13 +306,20 @@ def train_and_visualize():
 
     # Initialize model
     print("Initializing diffusion model...")
-    model = DiffusionModel(input_dim=2, num_timesteps=1000, lr=2e-4)
+    model = DiffusionModel(
+        input_dim=2,
+        num_timesteps=1000,
+        lr=2e-3,
+        hidden_dim=256,
+        num_layers=10,
+        time_embed_dim=128,
+    )
 
     # Train model
     print("Training model...")
     tracker = MetricTracker()
     trainer = pl.Trainer(
-        max_epochs=1000,
+        max_epochs=500,
         accelerator="auto",
         callbacks=[tracker],
         enable_progress_bar=True,
