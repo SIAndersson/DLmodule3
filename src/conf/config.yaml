@@ -1,0 +1,9 @@
+defaults:
+  - main: default
+  - model: flow_matching
+  - logging: simple
+  - _self_
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+
+log_dir: ${hydra:runtime.cwd}/logs/${now:%Y-%m-%d_%H-%M-%S}

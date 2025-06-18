@@ -1,11 +1,14 @@
+import logging
 import math
 
+import hydra
 import matplotlib.pyplot as plt
-import numpy as np
 import pytorch_lightning as pl
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from sklearn.datasets import make_moons
 from torch.optim import AdamW
@@ -13,8 +16,9 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from utils.seeding import set_seed
 
-# Set random seed for reproducibility
-set_seed(10)
+sns.set_theme(style="whitegrid", context="notebook", font="Arial Unicode MS")
+
+log = logging.getLogger(__name__)
 
 
 class MetricTracker(Callback):
@@ -112,23 +116,25 @@ class DiffusionModel(pl.LightningModule):
 
     def __init__(
         self,
-        input_dim,
-        num_timesteps=1000,
-        lr=1e-3,
-        hidden_dim=128,
-        num_layers=4,
-        time_embed_dim=32,
+        model_cfg: DictConfig,
     ):
         super().__init__()
-        self.input_dim = input_dim
-        self.num_timesteps = num_timesteps
-        self.lr = lr
+
+        self.input_dim = model_cfg.input_dim
+        self.num_timesteps = model_cfg.num_steps
+        self.lr = model_cfg.lr
+        self.hidden_dim = model_cfg.hidden_dim
+        self.num_layers = model_cfg.num_layers
+        self.time_embed_dim = model_cfg.time_embed_dim
+        self.weight_decay = model_cfg.weight_decay
 
         # Initialize the denoising network
-        self.model = DiffusionMLP(input_dim, hidden_dim, time_embed_dim, num_layers)
+        self.model = DiffusionMLP(
+            self.input_dim, self.hidden_dim, self.time_embed_dim, self.num_layers
+        )
 
         # Pre-compute diffusion schedule parameters
-        self.register_buffer("betas", self._cosine_beta_schedule(num_timesteps))
+        self.register_buffer("betas", self._cosine_beta_schedule(self.num_timesteps))
         self.register_buffer("alphas", 1.0 - self.betas)
         self.register_buffer("alphas_cumprod", torch.cumprod(self.alphas, dim=0))
         self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(self.alphas_cumprod))
@@ -217,7 +223,7 @@ class DiffusionModel(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return AdamW(self.parameters(), lr=self.lr, weight_decay=1e-3)
+        return AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
     @torch.no_grad()
     def p_sample(self, x, t):
@@ -293,46 +299,42 @@ def create_two_moons_data(n_samples):
     return torch.FloatTensor(X)
 
 
-def train_and_visualize():
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: DictConfig):
     """
     Complete training pipeline with visualization
     """
     # Set random seeds for reproducibility
-    torch.manual_seed(42)
-    np.random.seed(42)
+    set_seed(cfg.main.seed)
 
     # Create dataset
-    print("Creating 2D mixture of Gaussians dataset...")
-    data = create_two_moons_data(8000)
+    log.info("Creating 2D mixture of Gaussians dataset...")
+    data = create_two_moons_data(cfg.main.num_samples)
     dataset = TensorDataset(data)
-    dataloader = DataLoader(dataset, batch_size=512, shuffle=True, num_workers=0)
-
-    # Initialize model
-    print("Initializing diffusion model...")
-    model = DiffusionModel(
-        input_dim=2,
-        num_timesteps=1000,
-        lr=2e-3,
-        hidden_dim=256,
-        num_layers=10,
-        time_embed_dim=128,
+    dataloader = DataLoader(
+        dataset, batch_size=cfg.main.batch_size, shuffle=True, num_workers=0
     )
 
+    # Initialize model
+    log.info("Initializing diffusion model...")
+    model = DiffusionModel(cfg.model)
+
     # Train model
-    print("Training model...")
+    log.info("Training model...")
     tracker = MetricTracker()
     trainer = pl.Trainer(
-        max_epochs=500,
+        max_epochs=cfg.main.max_epochs,
         accelerator="auto",
         callbacks=[tracker],
         enable_progress_bar=True,
         log_every_n_steps=10,
-        gradient_clip_val=1.0,
+        gradient_clip_val=cfg.main.grad_clip,
     )
     trainer.fit(model, dataloader)
+    log.info("Training complete.")
 
     # Generate samples
-    print("Generating samples...")
+    log.info("Generating samples...")
     model.eval()
     device = next(model.parameters()).device
     generated_samples = model.sample((2000, 2), device)
@@ -341,19 +343,36 @@ def train_and_visualize():
     original_data = data.cpu().numpy()
     generated_data = generated_samples.cpu().numpy()
 
+    # Get current seaborn palette
+    palette = sns.color_palette()
+    colour_orig = palette[0]
+    colour_gen = palette[1]
+
     # Create visualization
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
 
     # Original data
-    ax1.scatter(original_data[:, 0], original_data[:, 1], alpha=0.6, s=20)
+    sns.scatterplot(
+        x=original_data[:, 0],
+        y=original_data[:, 1],
+        alpha=0.6,
+        s=20,
+        ax=ax1,
+        color=colour_orig,
+    )
     ax1.set_title("Original Data Distribution")
     ax1.set_xlabel("X₁")
     ax1.set_ylabel("X₂")
     ax1.set_aspect("equal")
 
     # Generated data
-    ax2.scatter(
-        generated_data[:, 0], generated_data[:, 1], alpha=0.6, s=20, color="red"
+    sns.scatterplot(
+        x=generated_data[:, 0],
+        y=generated_data[:, 1],
+        alpha=0.6,
+        s=20,
+        ax=ax2,
+        color=colour_gen,
     )
     ax2.set_title("Generated Samples")
     ax2.set_xlabel("X₁")
@@ -361,27 +380,33 @@ def train_and_visualize():
     ax2.set_aspect("equal")
 
     # Training loss
-    ax3.plot(tracker.train_losses)
+    sns.lineplot(
+        x=range(len(tracker.train_losses)),
+        y=tracker.train_losses,
+        ax=ax3,
+    )
     ax3.set_title("Training loss")
     ax3.set_xlabel("Epoch")
     ax3.set_ylabel("Loss")
 
     # Overlay comparison
-    ax4.scatter(
-        original_data[:, 0],
-        original_data[:, 1],
+    sns.scatterplot(
+        x=original_data[:, 0],
+        y=original_data[:, 1],
         alpha=0.4,
         s=20,
         label="Original",
-        color="blue",
+        color=colour_orig,
+        ax=ax4,
     )
-    ax4.scatter(
-        generated_data[:, 0],
-        generated_data[:, 1],
+    sns.scatterplot(
+        x=generated_data[:, 0],
+        y=generated_data[:, 1],
         alpha=0.4,
         s=20,
         label="Generated",
-        color="red",
+        color=colour_gen,
+        ax=ax4,
     )
     ax4.set_title("Comparison")
     ax4.set_xlabel("X₁")
@@ -394,7 +419,7 @@ def train_and_visualize():
     plt.show()
 
     # Show diffusion process visualization
-    print("Visualizing forward diffusion process...")
+    log.info("Visualizing forward diffusion process...")
     visualize_diffusion_process(model, data[:100])
 
     return model
@@ -441,12 +466,4 @@ if __name__ == "__main__":
     4. Sample generation through iterative denoising
     5. Visualization of original vs generated distributions
     """
-    print("=== Denoising Diffusion Probabilistic Model (DDPM) ===")
-    print("\nMathematical Foundation:")
-    print("• Forward: q(x_t|x_0) = N(x_t; √(ᾱ_t)x_0, (1-ᾱ_t)I)")
-    print("• Reverse: p_θ(x_{t-1}|x_t) = N(x_{t-1}; μ_θ(x_t,t), σ_t²I)")
-    print("• Training: L = E[||ε - ε_θ(x_t,t)||²]")
-    print("\nStarting training...\n")
-
-    model = train_and_visualize()
-    print("\nTraining complete!")
+    main()

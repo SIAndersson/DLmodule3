@@ -1,11 +1,15 @@
+import logging
 import math
-from typing import Literal, Optional
+from typing import Optional
 
+import hydra
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from sklearn.datasets import make_moons
 from torch.optim import AdamW
@@ -13,8 +17,10 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from utils.seeding import set_seed
 
-# Set random seed for reproducibility
-set_seed(10)
+# Configure matplotlib for better aesthetics
+sns.set_theme(style="whitegrid", context="notebook", font="Arial Unicode MS")
+
+log = logging.getLogger(__name__)
 
 
 class MetricTracker(Callback):
@@ -118,24 +124,25 @@ class FlowMatching(pl.LightningModule):
 
     def __init__(
         self,
-        dim: int,
-        hidden_dim: int = 256,
-        num_layers: int = 3,
-        lr: float = 1e-3,
-        sigma: float = 0.1,
-        ode_solver: Literal["euler", "rk4"] = "euler",
-        num_steps: int = 100,
+        model_cfg: DictConfig,
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        self.dim = dim
-        self.sigma = sigma  # Noise level for conditional flow matching
-        self.ode_solver = ode_solver
-        self.num_steps = num_steps
+        self.dim = model_cfg.input_dim
+        self.sigma = model_cfg.sigma  # Noise level for conditional flow matching
+        self.ode_solver = model_cfg.ode_solver
+        self.num_steps = model_cfg.num_steps
+        self.lr = model_cfg.lr
+        self.hidden_dim = model_cfg.hidden_dim
+        self.num_layers = model_cfg.num_layers
+        self.time_embed_dim = model_cfg.time_embed_dim
+        self.weight_decay = model_cfg.weight_decay
 
         # Vector field network v_θ(x, t)
-        self.vector_field = FlowMatchingMLP(dim, hidden_dim, num_layers)
+        self.vector_field = FlowMatchingMLP(
+            self.dim, self.hidden_dim, self.num_layers, self.time_embed_dim
+        )
 
     def conditional_vector_field(
         self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
@@ -320,7 +327,7 @@ class FlowMatching(pl.LightningModule):
 
     def configure_optimizers(self):
         """Configure Adam optimizer."""
-        return AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=1e-3)
+        return AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
 
 def create_2d_dataset(n_samples=10000):
@@ -342,37 +349,40 @@ def create_two_moons_data(n_samples):
 
 
 # Example usage and testing
-if __name__ == "__main__":
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: DictConfig):
+    # Set random seed for reproducibility
+    set_seed(cfg.main.seed)
+
+    log.info("Initializing Flow Matching model...")
     # Initialize model
-    model = FlowMatching(
-        dim=2,
-        hidden_dim=256,
-        num_layers=10,
-        lr=2e-3,
-        sigma=0.1,
-        ode_solver="rk4",  # Try "euler" or "rk4"
-        num_steps=100,
-    )
+    model = FlowMatching(cfg.model)
 
     # Create sample data
-    X_train = create_two_moons_data(8000)
+    log.info("Setting up dataset...")
+    X_train = create_two_moons_data(cfg.main.num_samples)
 
     # Define a simple PyTorch Lightning DataLoader
     dataset = TensorDataset(X_train)
-    dataloader = DataLoader(dataset, batch_size=512, shuffle=True, num_workers=0)
+    dataloader = DataLoader(
+        dataset, batch_size=cfg.main.batch_size, shuffle=True, num_workers=0
+    )
 
     # Initialize PyTorch Lightning Trainer and fit the model
+    log.info("Training model...")
     tracker = MetricTracker()
     trainer = pl.Trainer(
-        max_epochs=500,
+        max_epochs=cfg.main.max_epochs,
         callbacks=[tracker],
         accelerator="auto",
         log_every_n_steps=10,
-        gradient_clip_val=1.0,
+        gradient_clip_val=cfg.main.grad_clip,
     )
     trainer.fit(model, dataloader)
+    log.info("Training complete.")
 
     # Generate samples
+    log.info("Generating samples...")
     samples = model.sample(num_samples=2000)
 
     X = X_train.cpu().numpy()  # Move original data to CPU for plotting
@@ -381,31 +391,66 @@ if __name__ == "__main__":
     # Plot results
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
 
+    # Get current seaborn palette
+    palette = sns.color_palette()
+    colour_orig = palette[0]
+    colour_gen = palette[1]
+
     # Original data
-    ax1.scatter(X[:, 0], X[:, 1], alpha=0.6, s=20)
+    sns.scatterplot(x=X[:, 0], y=X[:, 1], alpha=0.6, s=20, ax=ax1, color=colour_orig)
     ax1.set_title("Original Data")
+    ax1.set_xlabel("X₁")
+    ax1.set_ylabel("X₂")
     ax1.set_aspect("equal")
 
     # Generated samples
-    ax2.scatter(samples[:, 0], samples[:, 1], alpha=0.6, s=20, color="red")
+    sns.scatterplot(
+        x=samples[:, 0], y=samples[:, 1], alpha=0.6, s=20, ax=ax2, color=colour_gen
+    )
     ax2.set_title("Generated Samples")
+    ax2.set_xlabel("X₁")
+    ax2.set_ylabel("X₂")
     ax2.set_aspect("equal")
 
     # Training loss
-    ax3.plot(tracker.train_losses)
+    sns.lineplot(
+        x=range(len(tracker.train_losses)),
+        y=tracker.train_losses,
+        ax=ax3,
+    )
     ax3.set_title("Training loss")
     ax3.set_xlabel("Epoch")
     ax3.set_ylabel("Loss")
 
     # Comparison
-    ax4.scatter(X[:, 0], X[:, 1], alpha=0.4, s=20, label="Original", color="blue")
-    ax4.scatter(
-        samples[:, 0], samples[:, 1], alpha=0.4, s=20, label="Generated", color="red"
+    sns.scatterplot(
+        x=X[:, 0],
+        y=X[:, 1],
+        alpha=0.4,
+        s=20,
+        label="Original",
+        color=colour_orig,
+        ax=ax4,
+    )
+    sns.scatterplot(
+        x=samples[:, 0],
+        y=samples[:, 1],
+        alpha=0.4,
+        s=20,
+        label="Generated",
+        color=colour_gen,
+        ax=ax4,
     )
     ax4.set_title("Comparison")
+    ax4.set_xlabel("X₁")
+    ax4.set_ylabel("X₂")
     ax4.legend()
     ax4.set_aspect("equal")
 
     plt.tight_layout()
     plt.savefig("flow_matching_results.png", dpi=300)
     plt.show()
+
+
+if __name__ == "__main__":
+    main()

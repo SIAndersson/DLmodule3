@@ -1,0 +1,25 @@
+version: 1
+formatters:
+  detailed:
+    format: "[%(asctime)s][%(name)s][%(levelname)s] - %(message)s"
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: detailed
+    stream: ext://sys.stdout
+  file:
+    class: logging.FileHandler
+    formatter: detailed
+    filename: ${log_dir}/training.log
+  debug_file:
+    class: logging.FileHandler
+    formatter: detailed
+    filename: ${log_dir}/debug.log
+    level: DEBUG
+
+root:
+  level: INFO
+  handlers: [console, file]
+
+disable_existing_loggers: false

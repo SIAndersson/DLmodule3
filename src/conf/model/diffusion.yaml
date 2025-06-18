@@ -1,0 +1,7 @@
+hidden_dim: 264
+num_layers: 10
+time_embed_dim: 128
+num_steps: 1000
+lr: 2e-3
+weight_decay: 1e-3
+input_dim: 2
