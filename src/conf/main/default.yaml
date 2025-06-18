@@ -3,3 +3,4 @@ grad_clip: 1.0
 max_epochs: 500
 seed: 10
 num_samples: 8000
+dataset: "two_moons"

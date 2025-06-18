@@ -9,11 +9,13 @@ import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from datasets import load_dataset
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
+from torchvision import transforms
 
 from utils.seeding import set_seed
 
@@ -348,6 +350,44 @@ def create_two_moons_data(n_samples):
     return torch.FloatTensor(X)
 
 
+def create_dataset(cfg: DictConfig):
+    """
+    Create dataset based on configuration.
+    """
+    if cfg.main.dataset.lower() == "two_moons":
+        return create_two_moons_data(cfg.main.num_samples)
+    elif cfg.main.dataset.lower() == "2d_gaussians":
+        return create_2d_dataset(cfg.main.num_samples)
+    elif cfg.main.dataset.lower() == "ffhq":
+        # Load FFHQ dataset from Hugging Face
+        dataset = load_dataset("bitmind/ffhq-256", split="train")
+        log.info(f"Loaded {len(dataset)} images from FFHQ dataset.")
+        print(dataset[0])  # Print first image metadata
+
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),  # Converts to (C, H, W) float tensor in [0, 1]
+                # Add any additional transforms like normalization if needed
+            ]
+        )
+
+        # Use map with batched=True to apply the transform efficiently
+        def transform_batch(batch):
+            batch["pixel_values"] = [
+                transform(image.convert("RGB")) for image in batch["image"]
+            ]
+            return batch
+
+        images = dataset.map(transform_batch, batched=True, remove_columns=["image"])
+
+        log.info(f"Loaded {len(images)} images from FFHQ dataset.")
+        print(images[0])  # Print first image metadata
+        # Normalize images to [0, 1]
+        return images.float() / 255.0
+    else:
+        raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
+
+
 # Example usage and testing
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
@@ -360,7 +400,7 @@ def main(cfg: DictConfig):
 
     # Create sample data
     log.info("Setting up dataset...")
-    X_train = create_two_moons_data(cfg.main.num_samples)
+    X_train = create_dataset(cfg)
 
     # Define a simple PyTorch Lightning DataLoader
     dataset = TensorDataset(X_train)
