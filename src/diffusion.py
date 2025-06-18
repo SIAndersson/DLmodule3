@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from utils.seeding import set_seed
 
-sns.set_theme(style="whitegrid", context="notebook", font="Arial Unicode MS")
+sns.set_theme(style="whitegrid", context="notebook", font="DejaVu Sans")
 
 log = logging.getLogger(__name__)
 
