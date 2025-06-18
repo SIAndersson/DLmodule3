@@ -1,5 +1,4 @@
 import logging
-import math
 from typing import Optional
 
 import hydra
@@ -7,16 +6,15 @@ import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from datasets import load_dataset
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
-from torchvision import transforms
 
+from utils.load_huggingface_data import load_huggingface_data
+from utils.models import CNN, MLP
 from utils.seeding import set_seed
 
 # Configure matplotlib for better aesthetics
@@ -39,73 +37,6 @@ class MetricTracker(Callback):
         loss = trainer.callback_metrics.get("val_loss")
         if loss is not None:
             self.val_losses.append(loss.item())
-
-
-class FlowMatchingMLP(nn.Module):
-    """
-    Simple MLP architecture for the vector field network v_θ(x, t).
-
-    The vector field v_θ(x, t) approximates the conditional vector field
-    u_t(x) = d/dt φ_t(x) where φ_t is the flow map from noise to data.
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        hidden_dim: int = 256,
-        num_layers: int = 3,
-        time_embed_dim: int = 128,
-    ):
-        super().__init__()
-        self.dim = dim
-        self.time_embed_dim = time_embed_dim
-
-        # Sinusoidal time embedding (similar to diffusion models)
-        self.time_mlp = nn.Sequential(
-            nn.Linear(time_embed_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-        # Main network layers
-        layers = [nn.Linear(dim + hidden_dim, hidden_dim)]
-        for _ in range(num_layers - 1):
-            layers.extend([nn.SiLU(), nn.Linear(hidden_dim, hidden_dim)])
-        layers.extend([nn.SiLU(), nn.Linear(hidden_dim, dim)])
-
-        self.net = nn.Sequential(*layers)
-
-    def get_timestep_embedding(self, timesteps: torch.Tensor) -> torch.Tensor:
-        """
-        Sinusoidal positional embeddings for time.
-
-        Uses sinusoidal functions sin(t/10000^(2i/d)) and cos(t/10000^(2i/d))
-        to encode time information in a way that's smooth and periodic.
-        """
-        half_dim = self.time_embed_dim // 2
-        emb = math.log(10000) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=timesteps.device) * -emb)
-        emb = timesteps[:, None] * emb[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
-        return emb
-
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the vector field network.
-
-        Args:
-            x: Input tensor of shape (batch_size, dim)
-            t: Time tensor of shape (batch_size,)
-
-        Returns:
-            Vector field v_θ(x, t) of shape (batch_size, dim)
-        """
-        t_emb = self.get_timestep_embedding(t)
-        t_emb = self.time_mlp(t_emb)
-
-        # Concatenate spatial and temporal features
-        h = torch.cat([x, t_emb], dim=-1)
-        return self.net(h)
 
 
 class FlowMatching(pl.LightningModule):
@@ -142,9 +73,24 @@ class FlowMatching(pl.LightningModule):
         self.weight_decay = model_cfg.weight_decay
 
         # Vector field network v_θ(x, t)
-        self.vector_field = FlowMatchingMLP(
-            self.dim, self.hidden_dim, self.num_layers, self.time_embed_dim
-        )
+        if model_cfg.model_type.upper() == "MLP":
+            self.vector_field = MLP(
+                input_dim=self.dim,
+                hidden_dim=self.hidden_dim,
+                num_layers=self.num_layers,
+                time_embed_dim=self.time_embed_dim,
+                model_type="vector_field",
+            )
+        elif model_cfg.model_type.upper() == "CNN":
+            self.vector_field = CNN(
+                input_channels=3,  # Assuming RGB images
+                time_embed_dim=self.time_embed_dim,
+                hidden_dim=self.hidden_dim,
+                num_layers=self.num_layers,
+                model_type="vector_field",
+            )
+        else:
+            raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
     def conditional_vector_field(
         self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
@@ -355,35 +301,15 @@ def create_dataset(cfg: DictConfig):
     Create dataset based on configuration.
     """
     if cfg.main.dataset.lower() == "two_moons":
+        log.info("Creating Two Moons dataset...")
         return create_two_moons_data(cfg.main.num_samples)
     elif cfg.main.dataset.lower() == "2d_gaussians":
+        log.info("Creating 2D Gaussian mixture dataset...")
         return create_2d_dataset(cfg.main.num_samples)
     elif cfg.main.dataset.lower() == "ffhq":
-        # Load FFHQ dataset from Hugging Face
-        dataset = load_dataset("bitmind/ffhq-256", split="train")
-        log.info(f"Loaded {len(dataset)} images from FFHQ dataset.")
-        print(dataset[0])  # Print first image metadata
-
-        transform = transforms.Compose(
-            [
-                transforms.ToTensor(),  # Converts to (C, H, W) float tensor in [0, 1]
-                # Add any additional transforms like normalization if needed
-            ]
-        )
-
-        # Use map with batched=True to apply the transform efficiently
-        def transform_batch(batch):
-            batch["pixel_values"] = [
-                transform(image.convert("RGB")) for image in batch["image"]
-            ]
-            return batch
-
-        images = dataset.map(transform_batch, batched=True, remove_columns=["image"])
-
-        log.info(f"Loaded {len(images)} images from FFHQ dataset.")
-        print(images[0])  # Print first image metadata
-        # Normalize images to [0, 1]
-        return images.float() / 255.0
+        dataset_name = "bitmind/ffhq-256"
+        log.info(f"Loading dataset: {dataset_name}")
+        return load_huggingface_data(dataset_name)
     else:
         raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
 

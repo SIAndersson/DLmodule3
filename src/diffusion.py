@@ -1,12 +1,10 @@
 import logging
-import math
 
 import hydra
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
@@ -14,6 +12,8 @@ from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
+from utils.load_huggingface_data import load_huggingface_data
+from utils.models import CNN, MLP
 from utils.seeding import set_seed
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -30,66 +30,6 @@ class MetricTracker(Callback):
         loss = trainer.callback_metrics.get("train_loss")
         if loss is not None:
             self.train_losses.append(loss.item())
-
-
-class DiffusionMLP(nn.Module):
-    """
-    Mathematical foundation:
-    The network learns to predict the noise ε ~ N(0, I) that was added
-    at timestep t, enabling reverse diffusion: x_{t-1} = μ_θ(x_t, t) + σ_t z
-    """
-
-    def __init__(self, input_dim, hidden_dim=128, time_embed_dim=32, num_layers=4):
-        super().__init__()
-        self.input_dim = input_dim
-        self.time_embed_dim = time_embed_dim
-
-        # Time embedding: converts timestep t to sinusoidal embeddings
-        # This helps the network understand which diffusion step we're at
-        self.time_embed = nn.Sequential(
-            nn.Linear(time_embed_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-        # Main network: predicts noise ε given noisy input x_t and timestep t
-        layers = [nn.Linear(input_dim + hidden_dim, hidden_dim)]
-        for _ in range(num_layers - 1):
-            layers.extend([nn.ReLU(), nn.Linear(hidden_dim, hidden_dim)])
-        layers.extend([nn.ReLU(), nn.Linear(hidden_dim, input_dim)])
-
-        self.net = nn.Sequential(*layers)
-
-    def get_time_embedding(self, timesteps):
-        """
-        Sinusoidal time embeddings as used in "Attention Is All You Need"
-        Helps the network distinguish between different diffusion timesteps
-        """
-        device = timesteps.device
-        half_dim = self.time_embed_dim // 2
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        embeddings = timesteps[:, None] * embeddings[None, :]
-        embeddings = torch.cat([torch.sin(embeddings), torch.cos(embeddings)], dim=-1)
-        return embeddings
-
-    def forward(self, x, t):
-        """
-        Forward pass: ε_θ(x_t, t) -> predicted noise
-
-        Args:
-            x: noisy data at timestep t, shape (batch_size, input_dim)
-            t: timestep, shape (batch_size,)
-
-        Returns:
-            predicted noise ε, shape (batch_size, input_dim)
-        """
-        t_embed = self.get_time_embedding(t)
-        t_embed = self.time_embed(t_embed)
-
-        # Concatenate noisy input with time embedding
-        x_with_time = torch.cat([x, t_embed], dim=-1)
-        return self.net(x_with_time)
 
 
 class DiffusionModel(pl.LightningModule):
@@ -129,9 +69,24 @@ class DiffusionModel(pl.LightningModule):
         self.weight_decay = model_cfg.weight_decay
 
         # Initialize the denoising network
-        self.model = DiffusionMLP(
-            self.input_dim, self.hidden_dim, self.time_embed_dim, self.num_layers
-        )
+        if model_cfg.model_type.upper() == "MLP":
+            self.model = MLP(
+                input_dim=self.input_dim,
+                hidden_dim=self.hidden_dim,
+                num_layers=self.num_layers,
+                time_embed_dim=self.time_embed_dim,
+                model_type="noise_predictor",
+            )
+        elif model_cfg.model_type.upper() == "CNN":
+            self.model = CNN(
+                input_channels=3,  # Assuming RGB images
+                time_embed_dim=self.time_embed_dim,
+                hidden_dim=self.hidden_dim,
+                num_layers=self.num_layers,
+                model_type="noise_predictor",
+            )
+        else:
+            raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
         # Pre-compute diffusion schedule parameters
         self.register_buffer("betas", self._cosine_beta_schedule(self.num_timesteps))
@@ -299,6 +254,24 @@ def create_two_moons_data(n_samples):
     return torch.FloatTensor(X)
 
 
+def create_dataset(cfg: DictConfig):
+    """
+    Create dataset based on configuration.
+    """
+    if cfg.main.dataset.lower() == "two_moons":
+        log.info("Creating Two Moons dataset...")
+        return create_two_moons_data(cfg.main.num_samples)
+    elif cfg.main.dataset.lower() == "2d_gaussians":
+        log.info("Creating 2D Gaussian mixture dataset...")
+        return create_2d_dataset(cfg.main.num_samples)
+    elif cfg.main.dataset.lower() == "ffhq":
+        dataset_name = "bitmind/ffhq-256"
+        log.info(f"Loading dataset: {dataset_name}")
+        return load_huggingface_data(dataset_name)
+    else:
+        raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
+
+
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
     """
@@ -308,8 +281,8 @@ def main(cfg: DictConfig):
     set_seed(cfg.main.seed)
 
     # Create dataset
-    log.info("Creating 2D mixture of Gaussians dataset...")
-    data = create_two_moons_data(cfg.main.num_samples)
+    data = create_dataset(cfg)
+
     dataset = TensorDataset(data)
     dataloader = DataLoader(
         dataset, batch_size=cfg.main.batch_size, shuffle=True, num_workers=0
