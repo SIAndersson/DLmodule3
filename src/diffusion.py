@@ -28,10 +28,8 @@ class MetricTracker(Callback):
             self.train_losses.append(loss.item())
 
 
-class SimpleUNet(nn.Module):
+class DiffusionMLP(nn.Module):
     """
-    Simple U-Net architecture for the denoising network ε_θ(x_t, t)
-
     Mathematical foundation:
     The network learns to predict the noise ε ~ N(0, I) that was added
     at timestep t, enabling reverse diffusion: x_{t-1} = μ_θ(x_t, t) + σ_t z
@@ -127,7 +125,7 @@ class DiffusionModel(pl.LightningModule):
         self.lr = lr
 
         # Initialize the denoising network
-        self.model = SimpleUNet(input_dim, hidden_dim, time_embed_dim, num_layers)
+        self.model = DiffusionMLP(input_dim, hidden_dim, time_embed_dim, num_layers)
 
         # Pre-compute diffusion schedule parameters
         self.register_buffer("betas", self._cosine_beta_schedule(num_timesteps))
