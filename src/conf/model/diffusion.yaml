@@ -1,4 +1,4 @@
-hidden_dim: 264
+hidden_dim: 256
 num_layers: 10
 time_embed_dim: 128
 num_steps: 1000
