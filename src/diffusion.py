@@ -11,6 +11,11 @@ from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
+from utils.seeding import set_seed
+
+# Set random seed for reproducibility
+set_seed(10)
+
 
 class MetricTracker(Callback):
     def __init__(self):
