@@ -14,16 +14,24 @@
 [Dirichlet flow matching for DNA sequence design](https://arxiv.org/pdf/2402.05841)
 
 # Initial layout
+
 Generative models:
+
 - Diffusion (Lo)
-	- Linear schedule diffusion OR classifier/classifier-free guidance
-	- DDPM with Cosine schedule diffusion
-	- DDIM (Denoising Diffusion Implicit Models)
+ 	- Linear schedule diffusion OR classifier/classifier-free guidance
+ 	- DDPM with Cosine schedule diffusion
+ 	- DDIM (Denoising Diffusion Implicit Models)
 - Flow matching (Seb)
-	- Standard flow matching
-	- Dirichlet flow matching
-	- Classifier/classifier-free guidance
+ 	- Standard flow matching
+ 	- Dirichlet flow matching
+ 	- Classifier/classifier-free guidance
 Datasets:
 - Two moons (example?)
 - FFHQ
 - LSUN Tower
+Generative model aspects:
+- Quality of generated samples
+- Training stability and convergence
+Evaluation metrics:
+- Loss (?)
+- Look into specific metrics for generative models
