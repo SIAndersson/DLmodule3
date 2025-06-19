@@ -68,7 +68,6 @@ class FlowMatching(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.dim = model_cfg.input_dim
         self.sigma = model_cfg.sigma  # Noise level for conditional flow matching
         self.ode_solver = model_cfg.ode_solver
         self.num_steps = model_cfg.num_steps
@@ -81,12 +80,13 @@ class FlowMatching(pl.LightningModule):
         # Vector field network v_θ(x, t)
         if model_cfg.model_type.upper() == "MLP":
             self.vector_field = MLP(
-                input_dim=self.dim,
+                input_dim=model_cfg.input_dim,
                 hidden_dim=self.hidden_dim,
                 num_layers=self.num_layers,
                 time_embed_dim=self.time_embed_dim,
                 model_type="vector_field",
             )
+            self.dim = model_cfg.input_dim
         elif model_cfg.model_type.upper() == "CNN":
             self.vector_field = CNN(
                 input_channels=3,  # Assuming RGB images
@@ -95,6 +95,7 @@ class FlowMatching(pl.LightningModule):
                 num_layers=self.num_layers,
                 model_type="vector_field",
             )
+            self.dim = (3, 256, 256)
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
