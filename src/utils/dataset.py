@@ -35,9 +35,9 @@ def load_huggingface_data(
 
     # Truncate dataset if test is True
     if test:
-        random_indices = random.sample(range(len(dataset)), 1000)
+        random_indices = random.sample(range(len(dataset)), 4000)
         dataset = dataset.select(random_indices)
-        logger.info("Dataset truncated to length 1000.")
+        logger.info("Dataset truncated to length 4000.")
 
     # Set transforms (currently just converts to tensor)
     transform = transforms.Compose(
