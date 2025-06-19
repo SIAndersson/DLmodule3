@@ -299,7 +299,7 @@ class FastEvaluationCallback(Callback):
 
         # Log metrics
         for metric_name, value in metrics.items():
-            pl_module.log(f"{metric_name}", value, on_epoch=True, prog_bar=True)
+            pl_module.log(f"{metric_name}", value, on_epoch=True, prog_bar=True, sync_dist=True)
 
         # Store in history
         self.metrics_history["epoch"].append(trainer.current_epoch)

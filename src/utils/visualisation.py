@@ -559,6 +559,7 @@ def visualize_evaluation_results(eval_callback, model_name: str = "diffusion"):
     """
     visualizer = EvaluationVisualizer()
     metrics_history = eval_callback.get_metrics_history()
+    print(metrics_history)
 
     if metrics_history["epoch"]:
         visualizer.plot_training_curves(metrics_history, model_name)
@@ -708,7 +709,7 @@ def plot_loss_function(tracker, model_name, dataset):
         ax2.set_ylabel("FID Score", color=colour_fid)
         ax2.tick_params(axis="y", labelcolor=colour_fid)
 
-    plt.title("Training Loss{' and FID Score' if len(tracker.fid_scores) > 0 else ''}")
+    plt.title(f"Training Loss{' and FID Score' if len(tracker.fid_scores) > 0 else ''}")
     fig.tight_layout()
     plt.savefig(f"{model_name}_{dataset}_loss_and_fid_function.png", dpi=300)
     plt.show()
