@@ -315,71 +315,73 @@ def main(cfg: DictConfig):
     log.info("Generating samples...")
     samples = model.sample(num_samples=2000)
 
-    X = X_train.cpu().numpy()  # Move original data to CPU for plotting
-    samples = samples.cpu().numpy()  # Move generated samples to CPU for plotting
+    # TODO: Set up visualisation for image data
+    if cfg.main.dataset.lower() == "two_moons" or cfg.main.dataset.lower() == "2d_gaussians":
+        X = X_train.cpu().numpy()  # Move original data to CPU for plotting
+        samples = samples.cpu().numpy()  # Move generated samples to CPU for plotting
 
-    # Plot results
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        # Plot results
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
 
-    # Get current seaborn palette
-    palette = sns.color_palette()
-    colour_orig = palette[0]
-    colour_gen = palette[1]
+        # Get current seaborn palette
+        palette = sns.color_palette()
+        colour_orig = palette[0]
+        colour_gen = palette[1]
 
-    # Original data
-    sns.scatterplot(x=X[:, 0], y=X[:, 1], alpha=0.6, s=20, ax=ax1, color=colour_orig)
-    ax1.set_title("Original Data")
-    ax1.set_xlabel("X₁")
-    ax1.set_ylabel("X₂")
-    ax1.set_aspect("equal")
+        # Original data
+        sns.scatterplot(x=X[:, 0], y=X[:, 1], alpha=0.6, s=20, ax=ax1, color=colour_orig)
+        ax1.set_title("Original Data")
+        ax1.set_xlabel("X₁")
+        ax1.set_ylabel("X₂")
+        ax1.set_aspect("equal")
 
-    # Generated samples
-    sns.scatterplot(
-        x=samples[:, 0], y=samples[:, 1], alpha=0.6, s=20, ax=ax2, color=colour_gen
-    )
-    ax2.set_title("Generated Samples")
-    ax2.set_xlabel("X₁")
-    ax2.set_ylabel("X₂")
-    ax2.set_aspect("equal")
+        # Generated samples
+        sns.scatterplot(
+            x=samples[:, 0], y=samples[:, 1], alpha=0.6, s=20, ax=ax2, color=colour_gen
+        )
+        ax2.set_title("Generated Samples")
+        ax2.set_xlabel("X₁")
+        ax2.set_ylabel("X₂")
+        ax2.set_aspect("equal")
 
-    # Training loss
-    sns.lineplot(
-        x=range(len(tracker.train_losses)),
-        y=tracker.train_losses,
-        ax=ax3,
-    )
-    ax3.set_title("Training loss")
-    ax3.set_xlabel("Epoch")
-    ax3.set_ylabel("Loss")
+        # Training loss
+        sns.lineplot(
+            x=range(len(tracker.train_losses)),
+            y=tracker.train_losses,
+            ax=ax3,
+        )
+        ax3.set_title("Training loss")
+        ax3.set_xlabel("Epoch")
+        ax3.set_ylabel("Loss")
 
-    # Comparison
-    sns.scatterplot(
-        x=X[:, 0],
-        y=X[:, 1],
-        alpha=0.4,
-        s=20,
-        label="Original",
-        color=colour_orig,
-        ax=ax4,
-    )
-    sns.scatterplot(
-        x=samples[:, 0],
-        y=samples[:, 1],
-        alpha=0.4,
-        s=20,
-        label="Generated",
-        color=colour_gen,
-        ax=ax4,
-    )
-    ax4.set_title("Comparison")
-    ax4.set_xlabel("X₁")
-    ax4.set_ylabel("X₂")
-    ax4.legend()
-    ax4.set_aspect("equal")
+        # Comparison
+        sns.scatterplot(
+            x=X[:, 0],
+            y=X[:, 1],
+            alpha=0.4,
+            s=20,
+            label="Original",
+            color=colour_orig,
+            ax=ax4,
+        )
+        sns.scatterplot(
+            x=samples[:, 0],
+            y=samples[:, 1],
+            alpha=0.4,
+            s=20,
+            label="Generated",
+            color=colour_gen,
+            ax=ax4,
+        )
+        ax4.set_title("Comparison")
+        ax4.set_xlabel("X₁")
+        ax4.set_ylabel("X₂")
+        ax4.legend()
+        ax4.set_aspect("equal")
 
-    plt.tight_layout()
-    plt.savefig("flow_matching_results.png", dpi=300)
-    plt.show()
+        plt.tight_layout()
+        plt.savefig("flow_matching_results.png", dpi=300)
+        plt.show()
 
 
 if __name__ == "__main__":
