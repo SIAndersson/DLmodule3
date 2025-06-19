@@ -92,6 +92,14 @@ class FlowMatching(pl.LightningModule):
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
+    def setup(self, stage=None):
+        # Check if current device supports tensor cores
+        if torch.cuda.is_available() and self.device.type == 'cuda':
+            device_props = torch.cuda.get_device_properties(self.device)
+            if device_props.major >= 7:
+                torch.set_float32_matmul_precision('high')
+                log.info(f"Tensor cores enabled on {device_props.name}")
+
     def conditional_vector_field(
         self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:

@@ -100,6 +100,14 @@ class DiffusionModel(pl.LightningModule):
         # For reverse process
         self.register_buffer("sqrt_recip_alphas", torch.sqrt(1.0 / self.alphas))
 
+    def setup(self, stage=None):
+        # Check if current device supports tensor cores
+        if torch.cuda.is_available() and self.device.type == 'cuda':
+            device_props = torch.cuda.get_device_properties(self.device)
+            if device_props.major >= 7:
+                torch.set_float32_matmul_precision('high')
+                log.info(f"Tensor cores enabled on {device_props.name}")
+
     def _cosine_beta_schedule(self, timesteps, s=0.008):
         """
         Cosine noise schedule from "Improved Denoising Diffusion Probabilistic Models"
