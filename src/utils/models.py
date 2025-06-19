@@ -124,7 +124,12 @@ class CNN(nn.Module):
                     nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
                 ]
             )
-        convs.extend([activation(), nn.Conv2d(hidden_dim, input_channels, kernel_size=3, padding=1)])
+        convs.extend(
+            [
+                activation(),
+                nn.Conv2d(hidden_dim, input_channels, kernel_size=3, padding=1),
+            ]
+        )
 
         self.conv_net = nn.Sequential(*convs)
 

@@ -1,7 +1,6 @@
 import logging
 
 import hydra
-import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
@@ -14,6 +13,12 @@ from torch.utils.data import DataLoader, TensorDataset
 from utils.dataset import create_dataset
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
+from utils.visualisation import (
+    save_2d_samples,
+    save_image_samples,
+    visualize_diffusion_process,
+    plot_loss_function,
+)
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
@@ -23,8 +28,9 @@ if torch.cuda.is_available():
     # Get properties of the first available GPU
     device_props = torch.cuda.get_device_properties(0)
     if device_props.major >= 7:
-        torch.set_float32_matmul_precision('high')
+        torch.set_float32_matmul_precision("high")
         print("Tensor cores enabled globally")
+
 
 class MetricTracker(Callback):
     def __init__(self):
@@ -276,123 +282,27 @@ def main(cfg: DictConfig):
     log.info("Generating samples...")
     model.eval()
     device = next(model.parameters()).device
-    generated_samples = model.sample((2000, 2), device)
 
-    # TODO: Set up visualisation for image data
-    if cfg.main.dataset.lower() == "two_moons" or cfg.main.dataset.lower() == "2d_gaussians":
+    if (
+        cfg.main.dataset.lower() == "two_moons"
+        or cfg.main.dataset.lower() == "2d_gaussians"
+    ):
+        generated_samples = model.sample((2000, 2), device)
 
-        # Move to CPU for plotting
-        original_data = data.cpu().numpy()
-        generated_data = generated_samples.cpu().numpy()
+        X = data.cpu().numpy()  # Move original data to CPU for plotting
+        samples = (
+            generated_samples.cpu().numpy()
+        )  # Move generated samples to CPU for plotting
 
-        # Get current seaborn palette
-        palette = sns.color_palette()
-        colour_orig = palette[0]
-        colour_gen = palette[1]
+        save_2d_samples(samples, X, tracker, "diffusion", cfg.main.dataset.lower())
 
-        # Create visualization
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        visualize_diffusion_process(model, device)
+    else:
+        final_samples = model.sample((16, 3, 256, 256), device)
 
-        # Original data
-        sns.scatterplot(
-            x=original_data[:, 0],
-            y=original_data[:, 1],
-            alpha=0.6,
-            s=20,
-            ax=ax1,
-            color=colour_orig,
-        )
-        ax1.set_title("Original Data Distribution")
-        ax1.set_xlabel("X₁")
-        ax1.set_ylabel("X₂")
-        ax1.set_aspect("equal")
-
-        # Generated data
-        sns.scatterplot(
-            x=generated_data[:, 0],
-            y=generated_data[:, 1],
-            alpha=0.6,
-            s=20,
-            ax=ax2,
-            color=colour_gen,
-        )
-        ax2.set_title("Generated Samples")
-        ax2.set_xlabel("X₁")
-        ax2.set_ylabel("X₂")
-        ax2.set_aspect("equal")
-
-        # Training loss
-        sns.lineplot(
-            x=range(len(tracker.train_losses)),
-            y=tracker.train_losses,
-            ax=ax3,
-        )
-        ax3.set_title("Training loss")
-        ax3.set_xlabel("Epoch")
-        ax3.set_ylabel("Loss")
-
-        # Overlay comparison
-        sns.scatterplot(
-            x=original_data[:, 0],
-            y=original_data[:, 1],
-            alpha=0.4,
-            s=20,
-            label="Original",
-            color=colour_orig,
-            ax=ax4,
-        )
-        sns.scatterplot(
-            x=generated_data[:, 0],
-            y=generated_data[:, 1],
-            alpha=0.4,
-            s=20,
-            label="Generated",
-            color=colour_gen,
-            ax=ax4,
-        )
-        ax4.set_title("Comparison")
-        ax4.set_xlabel("X₁")
-        ax4.set_ylabel("X₂")
-        ax4.legend()
-        ax4.set_aspect("equal")
-
-        plt.tight_layout()
-        plt.savefig("diffusion_training_results.png", dpi=300)
-        plt.show()
-
-        # Show diffusion process visualization
-        log.info("Visualizing forward diffusion process...")
-        visualize_diffusion_process(model, data[:100])
-
-
-def visualize_diffusion_process(model, samples):
-    """
-    Visualize how the forward diffusion process gradually adds noise
-    """
-    model.eval()
-    device = next(model.parameters()).device
-    samples = samples.to(device)
-
-    timesteps_to_show = [0, 50, 100, 150, 199]
-    fig, axes = plt.subplots(1, len(timesteps_to_show), figsize=(20, 4))
-
-    for i, t in enumerate(timesteps_to_show):
-        t_tensor = torch.full((samples.shape[0],), t, device=device)
-        noisy_samples = model.q_sample(samples, t_tensor)
-        noisy_samples = noisy_samples.cpu().numpy()
-
-        axes[i].scatter(noisy_samples[:, 0], noisy_samples[:, 1], alpha=0.6, s=10)
-        axes[i].set_title(f"Timestep t={t}")
-        axes[i].set_xlabel("X₁")
-        axes[i].set_ylabel("X₂")
-        axes[i].grid(True, alpha=0.3)
-        axes[i].set_xlim(-4, 4)
-        axes[i].set_ylim(-4, 4)
-
-    plt.suptitle("Forward Diffusion Process: Gradual Noise Addition")
-    plt.tight_layout()
-    plt.savefig("diffusion_forward_process.png", dpi=300)
-    plt.show()
+        # Save generated samples
+        save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
+        plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
 
 
 if __name__ == "__main__":

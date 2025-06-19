@@ -10,9 +10,12 @@ import os
 
 load_dotenv()
 
-HF_DATASETS_CACHE = os.getenv('HF_DATASETS_CACHE')
+HF_DATASETS_CACHE = os.getenv("HF_DATASETS_CACHE")
 
-def load_huggingface_data(dataset_name: str, logger, test: bool = False) -> torch.Tensor:
+
+def load_huggingface_data(
+    dataset_name: str, logger, test: bool = False
+) -> torch.Tensor:
     """
     Load a dataset from Huggingface and transform it into a PyTorch Dataset
     that returns image tensors.
@@ -24,7 +27,9 @@ def load_huggingface_data(dataset_name: str, logger, test: bool = False) -> torc
     """
 
     # Load dataset from Huggingface
-    dataset = load_dataset(dataset_name, split="train", cache_dir=HF_DATASETS_CACHE)  # or "test"
+    dataset = load_dataset(
+        dataset_name, split="train", cache_dir=HF_DATASETS_CACHE
+    )  # or "test"
 
     logger.info(f"Dataset loaded from {dataset_name}.")
 
@@ -38,6 +43,9 @@ def load_huggingface_data(dataset_name: str, logger, test: bool = False) -> torc
     transform = transforms.Compose(
         [
             transforms.ToTensor(),  # (C, H, W)
+            transforms.Normalize(
+                mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]
+            ),  # Normalize to [-1, 1]
         ]
     )
 
@@ -64,10 +72,12 @@ def load_huggingface_data(dataset_name: str, logger, test: bool = False) -> torc
     all_pixel_values = dataset["pixel_values"]
 
     # Concatenate all batches into a single tensor
-    all_tensors = torch.tensor(all_pixel_values) # Final shape (N, C, H, W)
+    all_tensors = torch.tensor(all_pixel_values)  # Final shape (N, C, H, W)
+    logger.info(f"Min: {all_tensors.min()}, Max: {all_tensors.max()}")
     logger.debug(f"Final shape: {all_tensors.shape}")
 
     return all_tensors
+
 
 def create_2d_dataset(n_samples=10000):
     """

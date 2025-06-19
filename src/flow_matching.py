@@ -2,20 +2,19 @@ import logging
 from typing import Optional
 
 import hydra
-import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
-from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
 from utils.dataset import create_dataset
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
+from utils.visualisation import save_2d_samples, save_image_samples, plot_loss_function
 
 # Configure matplotlib for better aesthetics
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -26,7 +25,7 @@ if torch.cuda.is_available():
     # Get properties of the first available GPU
     device_props = torch.cuda.get_device_properties(0)
     if device_props.major >= 7:
-        torch.set_float32_matmul_precision('high')
+        torch.set_float32_matmul_precision("high")
         print("Tensor cores enabled globally")
 
 
@@ -320,75 +319,24 @@ def main(cfg: DictConfig):
 
     # Generate samples
     log.info("Generating samples...")
-    samples = model.sample(num_samples=2000)
 
     # TODO: Set up visualisation for image data
-    if cfg.main.dataset.lower() == "two_moons" or cfg.main.dataset.lower() == "2d_gaussians":
+    if (
+        cfg.main.dataset.lower() == "two_moons"
+        or cfg.main.dataset.lower() == "2d_gaussians"
+    ):
+        samples = model.sample(num_samples=2000)
+
         X = X_train.cpu().numpy()  # Move original data to CPU for plotting
         samples = samples.cpu().numpy()  # Move generated samples to CPU for plotting
 
-        # Plot results
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        save_2d_samples(samples, X, tracker, "flow_matching", cfg.main.dataset.lower())
+    else:
+        final_samples = model.sample(num_samples=16)
 
-        # Get current seaborn palette
-        palette = sns.color_palette()
-        colour_orig = palette[0]
-        colour_gen = palette[1]
-
-        # Original data
-        sns.scatterplot(x=X[:, 0], y=X[:, 1], alpha=0.6, s=20, ax=ax1, color=colour_orig)
-        ax1.set_title("Original Data")
-        ax1.set_xlabel("X₁")
-        ax1.set_ylabel("X₂")
-        ax1.set_aspect("equal")
-
-        # Generated samples
-        sns.scatterplot(
-            x=samples[:, 0], y=samples[:, 1], alpha=0.6, s=20, ax=ax2, color=colour_gen
-        )
-        ax2.set_title("Generated Samples")
-        ax2.set_xlabel("X₁")
-        ax2.set_ylabel("X₂")
-        ax2.set_aspect("equal")
-
-        # Training loss
-        sns.lineplot(
-            x=range(len(tracker.train_losses)),
-            y=tracker.train_losses,
-            ax=ax3,
-        )
-        ax3.set_title("Training loss")
-        ax3.set_xlabel("Epoch")
-        ax3.set_ylabel("Loss")
-
-        # Comparison
-        sns.scatterplot(
-            x=X[:, 0],
-            y=X[:, 1],
-            alpha=0.4,
-            s=20,
-            label="Original",
-            color=colour_orig,
-            ax=ax4,
-        )
-        sns.scatterplot(
-            x=samples[:, 0],
-            y=samples[:, 1],
-            alpha=0.4,
-            s=20,
-            label="Generated",
-            color=colour_gen,
-            ax=ax4,
-        )
-        ax4.set_title("Comparison")
-        ax4.set_xlabel("X₁")
-        ax4.set_ylabel("X₂")
-        ax4.legend()
-        ax4.set_aspect("equal")
-
-        plt.tight_layout()
-        plt.savefig("flow_matching_results.png", dpi=300)
-        plt.show()
+        # Save generated samples
+        save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
+        plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
 
 
 if __name__ == "__main__":
