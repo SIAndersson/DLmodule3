@@ -86,7 +86,7 @@ class FlowMatching(pl.LightningModule):
                 time_embed_dim=self.time_embed_dim,
                 model_type="vector_field",
             )
-            self.dim = model_cfg.input_dim
+            self.dim = (model_cfg.input_dim)
         elif model_cfg.model_type.upper() == "CNN":
             self.vector_field = CNN(
                 input_channels=3,  # Assuming RGB images
@@ -243,7 +243,7 @@ class FlowMatching(pl.LightningModule):
             device = next(self.parameters()).device
 
         # Start from prior samples x_0 ~ N(0, I)
-        x = torch.randn(num_samples, self.dim, device=device)
+        x = torch.randn(num_samples, *(self.dim), device=device)
 
         # Integration parameters
         dt = 1.0 / self.num_steps
