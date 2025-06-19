@@ -210,11 +210,21 @@ class DiffusionModel(pl.LightningModule):
 
         Then: x_{t-1} = μ_θ(x_t, t) + σ_t * z, where z ~ N(0, I)
         """
-        betas_t = self.betas[t].reshape(-1, 1)
+        if x.dim() == 2:
+            # 2D data case (e.g., two moons, 2D Gaussian)
+            reshape_dims = (-1, 1)
+        elif x.dim() == 4:
+            # 4D data case (e.g., images)
+            reshape_dims = (-1, 1, 1, 1)
+        else:
+            # General case: reshape to match all dimensions except batch
+            reshape_dims = (-1,) + (1,) * (x.dim() - 1)
+
+        betas_t = self.betas[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
-            -1, 1
+            *reshape_dims
         )
-        sqrt_recip_alphas_t = self.sqrt_recip_alphas[t].reshape(-1, 1)
+        sqrt_recip_alphas_t = self.sqrt_recip_alphas[t].reshape(*reshape_dims)
 
         # Predict noise and compute mean
         predicted_noise = self.model(x, t)
