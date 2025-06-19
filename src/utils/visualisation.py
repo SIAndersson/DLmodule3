@@ -695,19 +695,20 @@ def plot_loss_function(tracker, model_name, dataset):
     ax1.set_ylabel("Loss", color=colour_loss)
     ax1.tick_params(axis="y", labelcolor=colour_loss)
 
-    # Create a second y-axis for FID scores
-    ax2 = ax1.twinx()
-    sns.lineplot(
-        x=range(len(tracker.fid_scores)),
-        y=tracker.fid_scores,
-        label="FID Score",
-        ax=ax2,
-        color=colour_fid,
-    )
-    ax2.set_ylabel("FID Score", color=colour_fid)
-    ax2.tick_params(axis="y", labelcolor=colour_fid)
+    if len(tracker.fid_scores) > 0:
+        # Create a second y-axis for FID scores
+        ax2 = ax1.twinx()
+        sns.lineplot(
+            x=range(len(tracker.fid_scores)),
+            y=tracker.fid_scores,
+            label="FID Score",
+            ax=ax2,
+            color=colour_fid,
+        )
+        ax2.set_ylabel("FID Score", color=colour_fid)
+        ax2.tick_params(axis="y", labelcolor=colour_fid)
 
-    plt.title("Training Loss and FID Score")
+    plt.title("Training Loss{' and FID Score' if len(tracker.fid_scores) > 0 else ''}")
     fig.tight_layout()
     plt.savefig(f"{model_name}_{dataset}_loss_and_fid_function.png", dpi=300)
     plt.show()
