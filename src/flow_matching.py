@@ -13,7 +13,7 @@ from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
-from utils.load_huggingface_data import load_huggingface_data
+from utils.dataset import create_dataset
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
 
@@ -278,42 +278,6 @@ class FlowMatching(pl.LightningModule):
         return AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
 
-def create_2d_dataset(n_samples=10000):
-    # Create mixture of 4 Gaussians in 2D
-    centers = torch.tensor([[-2, -2], [-2, 2], [2, -2], [2, 2]], dtype=torch.float32)
-    n_per_cluster = n_samples // 4
-
-    data = []
-    for center in centers:
-        cluster_data = torch.randn(n_per_cluster, 2) * 0.5 + center
-        data.append(cluster_data)
-
-    return torch.cat(data, dim=0)
-
-
-def create_two_moons_data(n_samples):
-    X, _ = make_moons(n_samples=n_samples, noise=0.1, random_state=42)
-    return torch.FloatTensor(X)
-
-
-def create_dataset(cfg: DictConfig):
-    """
-    Create dataset based on configuration.
-    """
-    if cfg.main.dataset.lower() == "two_moons":
-        log.info("Creating Two Moons dataset...")
-        return create_two_moons_data(cfg.main.num_samples)
-    elif cfg.main.dataset.lower() == "2d_gaussians":
-        log.info("Creating 2D Gaussian mixture dataset...")
-        return create_2d_dataset(cfg.main.num_samples)
-    elif cfg.main.dataset.lower() == "ffhq":
-        dataset_name = "bitmind/ffhq-256"
-        log.info(f"Loading dataset: {dataset_name}")
-        return load_huggingface_data(dataset_name)
-    else:
-        raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
-
-
 # Example usage and testing
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
@@ -326,7 +290,7 @@ def main(cfg: DictConfig):
 
     # Create sample data
     log.info("Setting up dataset...")
-    X_train = create_dataset(cfg)
+    X_train = create_dataset(cfg, log)
 
     # Define a simple PyTorch Lightning DataLoader
     dataset = TensorDataset(X_train)

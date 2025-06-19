@@ -8,11 +8,10 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
-from sklearn.datasets import make_moons
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
-from utils.load_huggingface_data import load_huggingface_data
+from utils.dataset import create_dataset
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
 
@@ -59,6 +58,7 @@ class DiffusionModel(pl.LightningModule):
         model_cfg: DictConfig,
     ):
         super().__init__()
+        self.save_hyperparameters()
 
         self.input_dim = model_cfg.input_dim
         self.num_timesteps = model_cfg.num_steps
@@ -232,46 +232,6 @@ class DiffusionModel(pl.LightningModule):
         return x
 
 
-def create_2d_dataset(n_samples=10000):
-    """
-    Create a 2D mixture of Gaussians dataset for visualization
-    This creates a simple but interesting distribution to model
-    """
-    # Create mixture of 4 Gaussians in 2D
-    centers = torch.tensor([[-2, -2], [-2, 2], [2, -2], [2, 2]], dtype=torch.float32)
-    n_per_cluster = n_samples // 4
-
-    data = []
-    for center in centers:
-        cluster_data = torch.randn(n_per_cluster, 2) * 0.5 + center
-        data.append(cluster_data)
-
-    return torch.cat(data, dim=0)
-
-
-def create_two_moons_data(n_samples):
-    X, _ = make_moons(n_samples=n_samples, noise=0.1, random_state=42)
-    return torch.FloatTensor(X)
-
-
-def create_dataset(cfg: DictConfig):
-    """
-    Create dataset based on configuration.
-    """
-    if cfg.main.dataset.lower() == "two_moons":
-        log.info("Creating Two Moons dataset...")
-        return create_two_moons_data(cfg.main.num_samples)
-    elif cfg.main.dataset.lower() == "2d_gaussians":
-        log.info("Creating 2D Gaussian mixture dataset...")
-        return create_2d_dataset(cfg.main.num_samples)
-    elif cfg.main.dataset.lower() == "ffhq":
-        dataset_name = "bitmind/ffhq-256"
-        log.info(f"Loading dataset: {dataset_name}")
-        return load_huggingface_data(dataset_name)
-    else:
-        raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
-
-
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
     """
@@ -281,7 +241,7 @@ def main(cfg: DictConfig):
     set_seed(cfg.main.seed)
 
     # Create dataset
-    data = create_dataset(cfg)
+    data = create_dataset(cfg, log)
 
     dataset = TensorDataset(data)
     dataloader = DataLoader(
@@ -395,8 +355,6 @@ def main(cfg: DictConfig):
     log.info("Visualizing forward diffusion process...")
     visualize_diffusion_process(model, data[:100])
 
-    return model
-
 
 def visualize_diffusion_process(model, samples):
     """
@@ -431,7 +389,7 @@ def visualize_diffusion_process(model, samples):
 if __name__ == "__main__":
     """
     Main execution: train the diffusion model and visualize results
-    
+
     This implementation demonstrates:
     1. Forward diffusion q(x_t | x_0) with cosine noise schedule
     2. Reverse diffusion p_θ(x_{t-1} | x_t) using a simple U-Net

@@ -83,15 +83,16 @@ class CNN(nn.Module):
 
     def __init__(
         self,
-        input_channels: int,
+        input_channels: int = 3,
         time_embed_dim: int = 128,
         hidden_dim: int = 64,
-        num_layers: int = 3,
+        num_layers: int = 1,
         model_type: str = "vector_field",
     ):
         super().__init__()
         self.input_channels = input_channels
         self.time_embed_dim = time_embed_dim
+        self.hidden_dim = hidden_dim
 
         if model_type == "vector_field":
             activation = nn.SiLU
@@ -109,7 +110,9 @@ class CNN(nn.Module):
         )
 
         # This projects the time embedding to a spatial feature map
-        self.time_proj = nn.Linear(hidden_dim, hidden_dim)
+        # NOTE: Projecting to a single channel so that there is only one
+        # extra dimension, 3 spatial dimensions and 1 time dimension
+        self.time_proj = nn.Linear(hidden_dim, 1)
 
         # CNN backbone
         self.total_num_layers = 5 * num_layers
@@ -121,7 +124,7 @@ class CNN(nn.Module):
                     nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1),
                 ]
             )
-        convs.extend([activation(), nn.Linear(hidden_dim, input_channels)])
+        convs.extend([activation(), nn.Conv2d(hidden_dim, input_channels, kernel_size=3, padding=1)])
 
         self.conv_net = nn.Sequential(*convs)
 
@@ -149,9 +152,13 @@ class CNN(nn.Module):
         """
         B, C, H, W = x.shape
         t_emb = self.get_timestep_embedding(t)
-        t_emb = self.time_mlp(t_emb)  # (B, hidden_dim)
+        print(f"t_emb shape: {t_emb.shape}")
+        t_emb = self.time_mlp(t_emb)  # (B, 1)
+        print(f"t_emb shape after time_mlp: {t_emb.shape}")
         t_proj = self.time_proj(t_emb).view(B, 1, 1, 1)  # (B, 1, 1, 1)
+        print(f"t_proj shape: {t_proj.shape}")
         t_feat = t_proj.expand(-1, 1, H, W)  # (B, 1, H, W)
+        print(f"t_feat shape: {t_feat.shape}")
 
         # Concatenate time embedding as an additional channel
         x_cat = torch.cat([x, t_feat], dim=1)  # (B, C+1, H, W)
