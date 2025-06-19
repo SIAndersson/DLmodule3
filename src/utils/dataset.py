@@ -6,6 +6,7 @@ from datasets import load_dataset
 from torchvision import transforms
 import random
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 
