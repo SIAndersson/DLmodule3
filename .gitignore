@@ -208,6 +208,7 @@ lightning_logs/
 # Outputs
 *.png
 .DS_Store
+data/
 
 # Tex stuff
 *.acn

@@ -5,7 +5,11 @@ import logging
 from datasets import load_dataset
 from torchvision import transforms
 import random
-from typing_extensions import Final
+from dotenv import load_dotenv
+
+load_dotenv()
+
+HF_DATASETS_CACHE = os.getenv('HF_DATASETS_CACHE')
 
 def load_huggingface_data(dataset_name: str, logger, test: bool = False) -> torch.Tensor:
     """
@@ -19,7 +23,7 @@ def load_huggingface_data(dataset_name: str, logger, test: bool = False) -> torc
     """
 
     # Load dataset from Huggingface
-    dataset = load_dataset(dataset_name, split="train")  # or "test"
+    dataset = load_dataset(dataset_name, split="train", cache_dir=HF_DATASETS_CACHE)  # or "test"
 
     logger.info(f"Dataset loaded from {dataset_name}.")
 
