@@ -7,15 +7,19 @@ import seaborn as sns
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
-from pytorch_lightning.callbacks import Callback
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 
 from utils.dataset import create_dataset
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
-from utils.visualisation import save_2d_samples, save_image_samples, plot_loss_function
-from utils.callbacks import EvaluateSamplesCallback, MetricTracker
+from utils.visualisation import (
+    save_2d_samples,
+    save_image_samples,
+    plot_loss_function,
+    visualize_evaluation_results,
+)
+from utils.callbacks import MetricTracker, create_evaluation_callback
 
 # Configure matplotlib for better aesthetics
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -71,7 +75,7 @@ class FlowMatching(pl.LightningModule):
                 time_embed_dim=self.time_embed_dim,
                 model_type="vector_field",
             )
-            self.dim = (model_cfg.input_dim)
+            self.dim = model_cfg.input_dim
         elif model_cfg.model_type.upper() == "CNN":
             self.vector_field = CNN(
                 input_channels=3,  # Assuming RGB images
@@ -228,7 +232,10 @@ class FlowMatching(pl.LightningModule):
             device = next(self.parameters()).device
 
         # Start from prior samples x_0 ~ N(0, I)
-        x = torch.randn(num_samples, *(self.dim), device=device)
+        if isinstance(self.dim, int):
+            x = torch.randn(num_samples, self.dim, device=device)
+        else:
+            x = torch.randn(num_samples, *self.dim, device=device)
 
         # Integration parameters
         dt = 1.0 / self.num_steps
@@ -293,9 +300,10 @@ def main(cfg: DictConfig):
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
     tracker = MetricTracker()
+    eval_callback = create_evaluation_callback(cfg, X_train, "vector_field")
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
-        callbacks=[tracker, EvaluateSamplesCallback(num_samples=500)],
+        callbacks=[tracker, eval_callback],
         accelerator="auto",
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
@@ -323,6 +331,8 @@ def main(cfg: DictConfig):
         # Save generated samples
         save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
         plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
+
+    visualize_evaluation_results(eval_callback, model_name="vector_field")
 
 
 if __name__ == "__main__":

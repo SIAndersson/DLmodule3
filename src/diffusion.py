@@ -6,13 +6,8 @@ import seaborn as sns
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
-from pytorch_lightning.callbacks import Callback
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
-from torchmetrics.image.fid import FrechetInceptionDistance
-from torchvision.utils import save_image
-from pathlib import Path
-import torchvision
 
 from utils.dataset import create_dataset
 from utils.models import CNN, MLP
@@ -22,8 +17,9 @@ from utils.visualisation import (
     save_image_samples,
     visualize_diffusion_process,
     plot_loss_function,
+    visualize_evaluation_results,
 )
-from utils.callbacks import EvaluateSamplesCallback, MetricTracker
+from utils.callbacks import MetricTracker, create_evaluation_callback
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
@@ -151,7 +147,9 @@ class DiffusionModel(pl.LightningModule):
             reshape_dims = (-1,) + (1,) * (x_start.dim() - 1)
 
         sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t].reshape(*reshape_dims)
-        sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(*reshape_dims)
+        sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
+            *reshape_dims
+        )
 
         return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
@@ -180,7 +178,9 @@ class DiffusionModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """Training step: sample timestep and compute denoising loss"""
-        x = batch[0] if isinstance(batch, (list, tuple)) else batch  # Assume batch is (data, labels) or just (data,)
+        x = (
+            batch[0] if isinstance(batch, (list, tuple)) else batch
+        )  # Assume batch is (data, labels) or just (data,)
         batch_size = x.shape[0]
 
         # Randomly sample timestep for each example
@@ -279,10 +279,11 @@ def main(cfg: DictConfig):
     # Train model
     log.info("Training model...")
     tracker = MetricTracker()
+    eval_callback = create_evaluation_callback(cfg, data, "diffusion")
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         accelerator="auto",
-        callbacks=[tracker, EvaluateSamplesCallback(num_samples=500)],
+        callbacks=[tracker, eval_callback],
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
@@ -308,13 +309,15 @@ def main(cfg: DictConfig):
 
         save_2d_samples(samples, X, tracker, "diffusion", cfg.main.dataset.lower())
 
-        visualize_diffusion_process(model, device)
+        visualize_diffusion_process(model, generated_samples)
     else:
         final_samples = model.sample((16, 3, 256, 256), device)
 
         # Save generated samples
         save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
         plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
+
+    visualize_evaluation_results(eval_callback, model_name="diffusion")
 
 
 if __name__ == "__main__":
