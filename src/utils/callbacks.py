@@ -8,7 +8,6 @@ import os
 import numpy as np
 from scipy.stats import wasserstein_distance
 from scipy.spatial.distance import cdist
-from torchvision.models import inception_v3
 import torch.nn.functional as F
 from sklearn.neighbors import NearestNeighbors
 
@@ -16,7 +15,7 @@ load_dotenv()
 
 DATASET_CACHE = os.getenv("HF_DATASETS_CACHE", None)
 
-# Taken from Reddit to avoid scipy sqrtm
+# Taken from Reddit to avoid scipy sqrtm https://www.reddit.com/r/MachineLearning/comments/12hv2u6/d_a_better_way_to_compute_the_fr%C3%A9chet_inception/
 def frechet_distance(mu_x: torch.Tensor, sigma_x: torch.Tensor, mu_y: torch.Tensor, sigma_y: torch.Tensor):
     a = (mu_x - mu_y).square().sum(dim=-1)
     b = sigma_x.trace() + sigma_y.trace()
@@ -378,14 +377,14 @@ class FastEvaluationCallback(Callback):
                 feat = self.feature_extractor(batch)
                 gen_features.append(feat)
 
-            gen_features = torch.cat(gen_features, dim=0)
+            gen_features = torch.cat(gen_features, dim=0).to(device)
 
         # Compute Frechet distance
         real_features = self.real_features
 
         # Compute means and covariances
-        mu_real, sigma_real = torch.mean(real_features, dim=0), cov(real_features, rowvar=False)
-        mu_gen, sigma_gen = torch.mean(gen_features, dim=0), cov(gen_features, rowvar=False)
+        mu_real, sigma_real = torch.mean(real_features, dim=0).to(device), cov(real_features, rowvar=False).to(device)
+        mu_gen, sigma_gen = torch.mean(gen_features, dim=0).to(device), cov(gen_features, rowvar=False).to(device)
 
         # Compute Frechet distance
         fd = frechet_distance(mu_real, sigma_real, mu_gen, sigma_gen)
