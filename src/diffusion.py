@@ -9,6 +9,10 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import Callback
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchvision.utils import save_image
+from pathlib import Path
+import torchvision
 
 from utils.dataset import create_dataset
 from utils.models import CNN, MLP
@@ -19,6 +23,7 @@ from utils.visualisation import (
     visualize_diffusion_process,
     plot_loss_function,
 )
+from utils.callbacks import EvaluateSamplesCallback, MetricTracker
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
@@ -30,17 +35,6 @@ if torch.cuda.is_available():
     if device_props.major >= 7:
         torch.set_float32_matmul_precision("high")
         print("Tensor cores enabled globally")
-
-
-class MetricTracker(Callback):
-    def __init__(self):
-        self.train_losses = []
-        self.val_losses = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        loss = trainer.callback_metrics.get("train_loss")
-        if loss is not None:
-            self.train_losses.append(loss.item())
 
 
 class DiffusionModel(pl.LightningModule):
@@ -186,7 +180,7 @@ class DiffusionModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """Training step: sample timestep and compute denoising loss"""
-        x = batch[0]  # Assume batch is (data, labels) or just (data,)
+        x = batch[0] if isinstance(batch, (list, tuple)) else batch  # Assume batch is (data, labels) or just (data,)
         batch_size = x.shape[0]
 
         # Randomly sample timestep for each example
@@ -288,7 +282,7 @@ def main(cfg: DictConfig):
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         accelerator="auto",
-        callbacks=[tracker],
+        callbacks=[tracker, EvaluateSamplesCallback(num_samples=500)],
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,

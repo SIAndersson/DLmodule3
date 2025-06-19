@@ -115,15 +115,39 @@ def visualize_diffusion_process(model, samples):
 
 
 def plot_loss_function(tracker, model_name, dataset):
-    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Get current seaborn palette
+    palette = sns.color_palette()
+    colour_loss = palette[0]
+    colour_fid = palette[1]
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Plot training loss on the left y-axis
     sns.lineplot(
         x=range(len(tracker.train_losses)),
         y=tracker.train_losses,
-        ax=ax,
+        label="Training Loss",
+        ax=ax1,
+        color=colour_loss
     )
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.tight_layout()
-    plt.savefig(f"{model_name}_{dataset}_loss_function.png", dpi=300)
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss", color=colour_loss)
+    ax1.tick_params(axis="y", labelcolor=colour_loss)
+
+    # Create a second y-axis for FID scores
+    ax2 = ax1.twinx()
+    sns.lineplot(
+        x=range(len(tracker.fid_scores)),
+        y=tracker.fid_scores,
+        label="FID Score",
+        ax=ax2,
+        color=colour_fid,
+    )
+    ax2.set_ylabel("FID Score", color=colour_fid)
+    ax2.tick_params(axis="y", labelcolor=colour_fid)
+
+    plt.title("Training Loss and FID Score")
+    fig.tight_layout()
+    plt.savefig(f"{model_name}_{dataset}_loss_and_fid_function.png", dpi=300)
     plt.show()

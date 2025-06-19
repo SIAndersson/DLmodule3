@@ -15,6 +15,7 @@ from utils.dataset import create_dataset
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
 from utils.visualisation import save_2d_samples, save_image_samples, plot_loss_function
+from utils.callbacks import EvaluateSamplesCallback, MetricTracker
 
 # Configure matplotlib for better aesthetics
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -27,22 +28,6 @@ if torch.cuda.is_available():
     if device_props.major >= 7:
         torch.set_float32_matmul_precision("high")
         print("Tensor cores enabled globally")
-
-
-class MetricTracker(Callback):
-    def __init__(self):
-        self.train_losses = []
-        self.val_losses = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        loss = trainer.callback_metrics.get("train_loss")
-        if loss is not None:
-            self.train_losses.append(loss.item())
-
-    def on_validation_epoch_end(self, trainer, pl_module):
-        loss = trainer.callback_metrics.get("val_loss")
-        if loss is not None:
-            self.val_losses.append(loss.item())
 
 
 class FlowMatching(pl.LightningModule):
@@ -310,7 +295,7 @@ def main(cfg: DictConfig):
     tracker = MetricTracker()
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
-        callbacks=[tracker],
+        callbacks=[tracker, EvaluateSamplesCallback(num_samples=500)],
         accelerator="auto",
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,

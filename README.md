@@ -40,4 +40,8 @@ Generative model aspects:
 Evaluation metrics:
 
 - Loss (?)
-- Look into specific metrics for generative models
+- Frechet Inception Distance (FID) (measures the similarity between the distributions of the generated samples and the real data in the feature space of a pre-trained classifier)
+- Inception Score (IS) (classify the generated samples and compute the entropy of the predicted class probabilities)
+- Perceptual Path Length (PPL) (calculated by measuring the average perceptual distance between pairs of generated samples that are interpolated in the latent space)
+- Precision, Recall, F1-score (computed using nearest-neighbor matching in the feature space of a pre-trained classifier)
+- Log-Likelihood (measures the probability of the real data given the model)
