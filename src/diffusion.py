@@ -19,6 +19,12 @@ sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
 log = logging.getLogger(__name__)
 
+if torch.cuda.is_available():
+    # Get properties of the first available GPU
+    device_props = torch.cuda.get_device_properties(0)
+    if device_props.major >= 7:
+        torch.set_float32_matmul_precision('high')
+        print("Tensor cores enabled globally")
 
 class MetricTracker(Callback):
     def __init__(self):
@@ -99,14 +105,6 @@ class DiffusionModel(pl.LightningModule):
 
         # For reverse process
         self.register_buffer("sqrt_recip_alphas", torch.sqrt(1.0 / self.alphas))
-
-    def setup(self, stage=None):
-        # Check if current device supports tensor cores
-        if torch.cuda.is_available() and self.device.type == 'cuda':
-            device_props = torch.cuda.get_device_properties(self.device)
-            if device_props.major >= 7:
-                torch.set_float32_matmul_precision('high')
-                log.info(f"Tensor cores enabled on {device_props.name}")
 
     def _cosine_beta_schedule(self, timesteps, s=0.008):
         """

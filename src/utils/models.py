@@ -152,13 +152,9 @@ class CNN(nn.Module):
         """
         B, C, H, W = x.shape
         t_emb = self.get_timestep_embedding(t)
-        print(f"t_emb shape: {t_emb.shape}")
         t_emb = self.time_mlp(t_emb)  # (B, 1)
-        print(f"t_emb shape after time_mlp: {t_emb.shape}")
         t_proj = self.time_proj(t_emb).view(B, 1, 1, 1)  # (B, 1, 1, 1)
-        print(f"t_proj shape: {t_proj.shape}")
         t_feat = t_proj.expand(-1, 1, H, W)  # (B, 1, H, W)
-        print(f"t_feat shape: {t_feat.shape}")
 
         # Concatenate time embedding as an additional channel
         x_cat = torch.cat([x, t_feat], dim=1)  # (B, C+1, H, W)

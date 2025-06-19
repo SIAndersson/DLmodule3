@@ -22,6 +22,13 @@ sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
 log = logging.getLogger(__name__)
 
+if torch.cuda.is_available():
+    # Get properties of the first available GPU
+    device_props = torch.cuda.get_device_properties(0)
+    if device_props.major >= 7:
+        torch.set_float32_matmul_precision('high')
+        print("Tensor cores enabled globally")
+
 
 class MetricTracker(Callback):
     def __init__(self):
@@ -91,14 +98,6 @@ class FlowMatching(pl.LightningModule):
             )
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
-
-    def setup(self, stage=None):
-        # Check if current device supports tensor cores
-        if torch.cuda.is_available() and self.device.type == 'cuda':
-            device_props = torch.cuda.get_device_properties(self.device)
-            if device_props.major >= 7:
-                torch.set_float32_matmul_precision('high')
-                log.info(f"Tensor cores enabled on {device_props.name}")
 
     def conditional_vector_field(
         self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
