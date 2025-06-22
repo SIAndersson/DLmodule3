@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -44,6 +45,8 @@ def plot_evaluation_metrics(
 
     # Get metrics history
     metrics_history = callback.get_metrics_history()
+
+    print(metrics_history)
 
     # Check if we have data
     if not metrics_history["epoch"]:
@@ -242,8 +245,13 @@ def plot_evaluation_metrics(
 
     # Save if requested
     if save_path:
-        plt.savefig(save_path, dpi=dpi, bbox_inches="tight", facecolor="white")
-        print(f"Figure saved to: {save_path}")
+        # Determine the root directory (two levels up from this file)
+        root_dir = Path(__file__).resolve().parent.parent.parent
+        eval_dir = root_dir / "evaluation_plots"
+        eval_dir.mkdir(exist_ok=True)
+        save_file = eval_dir / save_path
+        plt.savefig(save_file, dpi=dpi, bbox_inches="tight", facecolor="white")
+        print(f"Figure saved to: {save_file}")
 
     return fig
 
@@ -323,7 +331,13 @@ def plot_metrics_comparison(
     plt.tight_layout()
 
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        # Determine the root directory (two levels up from this file)
+        root_dir = Path(__file__).resolve().parent.parent.parent
+        eval_dir = root_dir / "evaluation_plots"
+        eval_dir.mkdir(exist_ok=True)
+        save_file = eval_dir / save_path
+        plt.savefig(save_file, bbox_inches="tight", facecolor="white")
+        print(f"Figure saved to: {save_file}")
 
     return fig
 
@@ -450,7 +464,14 @@ def save_2d_samples(samples, X, tracker, model_name, dataset):
     ax4.set_aspect("equal")
 
     plt.tight_layout()
-    plt.savefig(f"{model_name}_{dataset}_results.png", dpi=300)
+
+    # Determine the root directory (two levels up from this file)
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    eval_dir = root_dir / "evaluation_plots"
+    eval_dir.mkdir(exist_ok=True)
+    save_file = eval_dir / f"{model_name}_{dataset}_results.png"
+
+    plt.savefig(save_file, dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -480,7 +501,11 @@ def visualize_diffusion_process(model, samples):
 
     plt.suptitle("Forward Diffusion Process: Gradual Noise Addition")
     plt.tight_layout()
-    plt.savefig("diffusion_forward_process.png", dpi=300)
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    eval_dir = root_dir / "evaluation_plots"
+    eval_dir.mkdir(exist_ok=True)
+    save_file = eval_dir / "diffusion_forward_process.png"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -506,5 +531,9 @@ def plot_loss_function(tracker, model_name, dataset):
 
     plt.title("Training Loss")
     fig.tight_layout()
-    plt.savefig(f"{model_name}_{dataset}_loss_function.png", dpi=300)
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    eval_dir = root_dir / "evaluation_plots"
+    eval_dir.mkdir(exist_ok=True)
+    save_file = eval_dir / f"{model_name}_{dataset}_loss_function.png"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight")
     plt.show()

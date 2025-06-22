@@ -209,6 +209,8 @@ lightning_logs/
 *.png
 .DS_Store
 data/
+weights/
+evaluation_plots/
 
 # Tex stuff
 *.acn
