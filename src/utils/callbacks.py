@@ -192,7 +192,7 @@ class GenerativeModelEvaluator:
                         )
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
-                    generated_samples.append(samples.cpu())
+                generated_samples.append(samples.cpu())
 
         return torch.cat(generated_samples, dim=0)
 
@@ -320,8 +320,8 @@ class GenerativeModelEvaluator:
 
     def _compute_energy_distance(self, real_features, fake_features, device):
         """Compute Energy Distance between two samples"""
-        X = real_features
-        Y = fake_features
+        X = real_features.to(device)
+        Y = fake_features.to(device)
 
         # Subsample for efficiency if datasets are large
         if len(X) > 500:
@@ -392,6 +392,7 @@ class GenerativeModelEvaluator:
 
     def _compute_diversity_metrics(self, fake_features, device):
         """Compute diversity metrics for generated samples"""
+        fake_features = fake_features.to(device)
         # Subsample for efficiency
         if len(fake_features) > 500:
             idx = torch.randperm(len(fake_features), device=device)[:500]

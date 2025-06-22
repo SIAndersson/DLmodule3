@@ -2,7 +2,7 @@ batch_size: 512
 grad_clip: 1.0
 max_epochs: 500
 seed: 10
-num_samples: 8000
+num_samples: 10000
 dataset: "two_moons"
 test: true
 val_size: 0.1

@@ -13,6 +13,7 @@
 - [First paper on flow matching](https://arxiv.org/abs/2210.02747)
 - [Introduction to flow matching](https://mlg.eng.cam.ac.uk/blog/2024/01/20/flow-matching.html)
 - [Dirichlet flow matching for DNA sequence design](https://arxiv.org/pdf/2402.05841)
+- [Classifier-free guidance (also relevant for diffusion)](https://arxiv.org/abs/2502.07849)
 
 # Initial layout
 
