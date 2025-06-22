@@ -5,3 +5,4 @@ seed: 10
 num_samples: 8000
 dataset: "ffhq"
 test: true
+val_size: 0.1

@@ -17,56 +17,10 @@ load_dotenv()
 DATASET_CACHE = os.getenv("HF_DATASETS_CACHE", None)
 
 
-# Taken from Reddit to avoid scipy sqrtm https://www.reddit.com/r/MachineLearning/comments/12hv2u6/d_a_better_way_to_compute_the_fr%C3%A9chet_inception/
-def frechet_distance(
-    mu_x: torch.Tensor, sigma_x: torch.Tensor, mu_y: torch.Tensor, sigma_y: torch.Tensor
-):
-    a = (mu_x - mu_y).square().sum(dim=-1)
-    b = sigma_x.trace() + sigma_y.trace()
-    c = torch.linalg.eigvals(sigma_x @ sigma_y).sqrt().real.sum(dim=-1)
-
-    return a + b - 2 * c
-
-
-# Taken from https://discuss.pytorch.org/t/covariance-and-gradient-support/16217/2
-def cov(m, rowvar=False):
-    """Estimate a covariance matrix given data.
-
-    Covariance indicates the level to which two variables vary together.
-    If we examine N-dimensional samples, `X = [x_1, x_2, ... x_N]^T`,
-    then the covariance matrix element `C_{ij}` is the covariance of
-    `x_i` and `x_j`. The element `C_{ii}` is the variance of `x_i`.
-
-    Args:
-        m: A 1-D or 2-D array containing multiple variables and observations.
-            Each row of `m` represents a variable, and each column a single
-            observation of all those variables.
-        rowvar: If `rowvar` is True, then each row represents a
-            variable, with observations in the columns. Otherwise, the
-            relationship is transposed: each column represents a variable,
-            while the rows contain observations.
-
-    Returns:
-        The covariance matrix of the variables.
+# The cooler Daniel (the faster evaluator)
+class GenerativeModelEvaluator:
     """
-    if m.dim() > 2:
-        raise ValueError("m has more than 2 dimensions")
-    if m.dim() < 2:
-        m = m.view(1, -1)
-    if not rowvar and m.size(0) != 1:
-        m = m.t()
-    # m = m.type(torch.double)  # uncomment this line if desired
-    fact = 1.0 / (m.size(1) - 1)
-    m -= torch.mean(m, dim=1, keepdim=True)
-    mt = m.t()  # if complex: mt = m.t().conj()
-    return fact * m.matmul(mt).squeeze()
-
-
-# The cooler Daniel (the faster callback)
-class FastEvaluationCallback(Callback):
-    """
-    Fast evaluation callback for generative models.
-    Computes lightweight metrics during training without slowing down significantly.
+    Rewritten to be a class and not a Callback. Computes fast metrics.
     """
 
     def __init__(
@@ -86,11 +40,9 @@ class FastEvaluationCallback(Callback):
         compute_energy_distance=True,
         compute_density_consistency=True,
         compute_mode_collapse=True,
-        compute_spectral_metrics=True,
         compute_diversity_metrics=True,
         k_nearest=5,  # for coverage/precision
         mmd_kernel="rbf",  # 'rbf' or 'polynomial'
-        device="auto",
     ):
         self.logger = logger
         self.model_type = model_type
@@ -111,68 +63,40 @@ class FastEvaluationCallback(Callback):
         self.compute_diversity_metrics = compute_diversity_metrics
         self.k_nearest = k_nearest
         self.mmd_kernel = mmd_kernel
-        self.device = device
 
         self.feature_extractor = None
         self.real_features_cache = None
         self.real_samples_cache = None
 
-        # Store metrics history
-        self.metrics_history = {
-            "epoch": [],
-            "wasserstein_distance": [],
-            "mmd": [],
-            "coverage": [],
-            "precision": [],
-            "js_divergence": [],
-            "energy_distance": [],
-            "density_ks_stat": [],
-            "log_density_ratio": [],
-            "mode_collapse_score": [],
-            "duplicate_ratio": [],
-            "mean_pairwise_distance": [],
-            "min_pairwise_distance": [],
-            "std_pairwise_distance": [],
-            "distance_entropy": [],
-        }
-
-    def setup(self, trainer, pl_module, stage=None):
-        """Setup feature extractor and cache real data features"""
-        # Setup feature extractor if needed
-        if (
-            self.feature_extractor_name and pl_module.input_dim > 2
-        ):  # Assume images if dim > 2
-            self._setup_feature_extractor()
-
-    def _setup_feature_extractor(self):
+    def setup_feature_extractor(self, device):
         """Initialize lightweight feature extractor"""
+        if not self.feature_extractor_name or self.dataset_type == "2d":
+            return
+
         if self.feature_extractor_name == "mobilenet":
-            # Download to specified cache directory
             os.environ["TORCH_HOME"] = str(self.cache_dir)
             model = models.mobilenet_v2(pretrained=True)
-            # Remove classifier to get features
             self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
             self.feature_dim = 1280
 
         elif self.feature_extractor_name == "resnet18":
             os.environ["TORCH_HOME"] = str(self.cache_dir)
             model = models.resnet18(pretrained=True)
-            # Remove final FC layer
             self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
             self.feature_dim = 512
 
-        self.feature_extractor.eval()
-        self.feature_extractor.to(self.device)
+        if self.feature_extractor:
+            self.feature_extractor.eval()
+            self.feature_extractor.to(device)
 
-        # Image preprocessing
-        self.preprocess = transforms.Compose(
-            [
-                transforms.Resize((224, 224)),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
+            self.preprocess = transforms.Compose(
+                [
+                    transforms.Resize((224, 224)),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                    ),
+                ]
+            )
 
     def _extract_features(self, samples):
         """Extract features from samples"""
@@ -210,7 +134,7 @@ class FastEvaluationCallback(Callback):
 
         return torch.cat(features, dim=0)
 
-    def _cache_real_data(self, trainer):
+    def cache_real_data(self, train_loader, device):
         """Cache real training data features"""
         if self.real_features_cache is not None:
             return
@@ -219,7 +143,6 @@ class FastEvaluationCallback(Callback):
         real_samples = []
 
         # Sample from training data
-        train_loader = trainer.train_dataloader
         samples_collected = 0
 
         for batch in train_loader:
@@ -238,13 +161,13 @@ class FastEvaluationCallback(Callback):
         self.real_samples_cache = real_samples
 
         # Extract features
-        real_samples = real_samples.to(self.device)
+        real_samples = real_samples.to(device)
         self.real_features_cache = self._extract_features(real_samples).cpu()
         self.logger.info(f"Cached {len(self.real_features_cache)} real samples")
 
-    def _generate_samples(self, pl_module):
+    def generate_samples(self, model, device):
         """Generate samples from the model"""
-        pl_module.eval()
+        model.eval()
         generated_samples = []
 
         with torch.no_grad():
@@ -256,19 +179,17 @@ class FastEvaluationCallback(Callback):
 
                 if self.dataset_type == "2d":
                     if self.model_type == "vector_field":
-                        samples = pl_module.fast_sample(current_batch_size, self.device)
+                        samples = model.fast_sample(current_batch_size, device)
                     elif self.model_type == "diffusion":
-                        samples = pl_module.ddim_sample(
-                            (current_batch_size, 2), self.device
-                        )
+                        samples = model.ddim_sample((current_batch_size, 2), device)
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
                 else:  # image
                     if self.model_type == "vector_field":
-                        samples = pl_module.fast_sample(current_batch_size, self.device)
+                        samples = model.fast_sample(current_batch_size, device)
                     elif self.model_type == "diffusion":
-                        samples = pl_module.ddim_sample(
-                            (current_batch_size, 3, 256, 256), self.device
+                        samples = model.ddim_sample(
+                            (current_batch_size, 3, 256, 256), device
                         )
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
@@ -398,17 +319,17 @@ class FastEvaluationCallback(Callback):
 
         return torch.stack(js_divs).mean().item()
 
-    def _compute_energy_distance(self, real_features, fake_features):
+    def _compute_energy_distance(self, real_features, fake_features, device):
         """Compute Energy Distance between two samples"""
         X = real_features
         Y = fake_features
 
         # Subsample for efficiency if datasets are large
         if len(X) > 500:
-            idx_x = torch.randperm(len(X), device=self.device)[:500]
+            idx_x = torch.randperm(len(X), device=device)[:500]
             X = X[idx_x]
         if len(Y) > 500:
-            idx_y = torch.randperm(len(Y), device=self.device)[:500]
+            idx_y = torch.randperm(len(Y), device=device)[:500]
             Y = Y[idx_y]
 
         # Compute pairwise distances on GPU
@@ -470,20 +391,20 @@ class FastEvaluationCallback(Callback):
             "duplicate_ratio": duplicate_ratio,
         }
 
-    def _compute_diversity_metrics(self, fake_features):
+    def _compute_diversity_metrics(self, fake_features, device):
         """Compute diversity metrics for generated samples"""
         # Subsample for efficiency
         if len(fake_features) > 500:
-            idx = torch.randperm(len(fake_features), device=self.device)[:500]
+            idx = torch.randperm(len(fake_features), device=device)[:500]
             fake_subset = fake_features[idx]
         else:
             fake_subset = fake_features
 
         # Compute pairwise distances
-        distances = torch.cdist(fake_subset, fake_subset, p=2).to(self.device)
+        distances = torch.cdist(fake_subset, fake_subset, p=2).to(device)
 
         # Remove diagonal (self-distances)
-        mask = ~torch.eye(distances.shape[0], dtype=torch.bool, device=self.device)
+        mask = ~torch.eye(distances.shape[0], dtype=torch.bool, device=device)
         distances_flat = distances[mask]
 
         # Diversity metrics
@@ -509,114 +430,82 @@ class FastEvaluationCallback(Callback):
             "distance_entropy": distance_entropy,
         }
 
-    @rank_zero_only
-    def on_train_epoch_end(self, trainer, pl_module):
+    def evaluate(self, model, device):
         """Run evaluation at the end of train epoch"""
-        if trainer.current_epoch % self.eval_every_n_epochs != 0:
-            return
+        if self.real_features_cache is None:
+            return {}
 
-        if not trainer.is_global_zero:
-            return
+        # Generate samples
+        generated_samples = self.generate_samples(model, device)
+        generated_samples = generated_samples.to(device)
+        fake_features = self._extract_features(generated_samples).cpu()
 
-        if self.device == "auto" or isinstance(self.device, str):
-            self.device = pl_module.device
+        metrics = {}
 
-        pl_module.eval()
+        self.logger.info("Computing metrics...")
 
-        try:
-            # Cache real data on first evaluation
-            self._cache_real_data(trainer)
-
-            # Generate samples
-            self.logger.info(f"Generating {self.num_samples} samples for evaluation...")
-            generated_samples = self._generate_samples(pl_module)
-
-            # Extract features
-            generated_samples = generated_samples.to(self.device)
-            fake_features = self._extract_features(generated_samples).cpu()
-
-            metrics = {}
-
-            self.logger.info("Computing metrics...")
-
-            # Compute Wasserstein distance
-            if self.compute_wasserstein:
-                wd = self._compute_wasserstein_distance(
-                    self.real_features_cache, fake_features
-                )
-                metrics["wasserstein_distance"] = wd
-                self.logger.info("Computed Wasserstein distance.")
-
-            # Compute MMD
-            if self.compute_mmd:
-                mmd = self._compute_mmd(
-                    self.real_features_cache, fake_features, self.mmd_kernel
-                )
-                metrics["mmd"] = mmd
-                self.logger.info("Computed MMD.")
-
-            # Compute Coverage and Precision
-            if self.compute_coverage_precision:
-                coverage, precision = self._compute_coverage_precision(
-                    self.real_features_cache, fake_features, self.k_nearest
-                )
-                metrics["coverage"] = coverage
-                metrics["precision"] = precision
-                self.logger.info("Computed coverage and precision.")
-
-            # Compute Jensen-Shannon Divergence
-            if self.compute_js_divergence:
-                js_div = self._compute_js_divergence(
-                    self.real_features_cache, fake_features
-                )
-                metrics["js_divergence"] = js_div
-                self.logger.info("Computed JS divergence.")
-
-            # Compute Energy Distance
-            if self.compute_energy_distance:
-                energy_dist = self._compute_energy_distance(
-                    self.real_features_cache, fake_features
-                )
-                metrics["energy_distance"] = energy_dist
-                self.logger.info("Computed energy distance.")
-
-            # Compute Density Consistency
-            if self.compute_density_consistency:
-                density_metrics = self._compute_density_consistency(
-                    self.real_features_cache, fake_features
-                )
-                metrics.update(density_metrics)
-                self.logger.info("Computed density consistency.")
-
-            # Compute Mode Collapse Metrics
-            if self.compute_mode_collapse:
-                mode_metrics = self._compute_mode_collapse_metrics(fake_features)
-                metrics.update(mode_metrics)
-                self.logger.info("Computed mode collapse metrics.")
-
-            # Compute Diversity Metrics
-            if self.compute_diversity_metrics:
-                diversity_metrics = self._compute_diversity_metrics(fake_features)
-                metrics.update(diversity_metrics)
-                self.logger.info("Computed diversity metrics.")
-
-            # Log metrics
-            for name, value in metrics.items():
-                pl_module.log(f"eval/{name}", value, sync_dist=True)
-
-            # Store in history
-            self.metrics_history["epoch"].append(trainer.current_epoch)
-            for metric_name, value in metrics.items():
-                if metric_name in self.metrics_history:
-                    self.metrics_history[metric_name].append(value)
-        except Exception as e:
-            self.logger.error(
-                f"[Evaluation Callback] Failed at epoch {trainer.current_epoch}: {e}"
+        # Compute Wasserstein distance
+        if self.compute_wasserstein:
+            wd = self._compute_wasserstein_distance(
+                self.real_features_cache, fake_features
             )
+            metrics["wasserstein_distance"] = wd
+            self.logger.info("Computed Wasserstein distance.")
 
-    def get_metrics_history(self):
-        """Return the complete metrics history"""
-        return self.metrics_history
+        # Compute MMD
+        if self.compute_mmd:
+            mmd = self._compute_mmd(
+                self.real_features_cache, fake_features, self.mmd_kernel
+            )
+            metrics["mmd"] = mmd
+            self.logger.info("Computed MMD.")
+
+        # Compute Coverage and Precision
+        if self.compute_coverage_precision:
+            coverage, precision = self._compute_coverage_precision(
+                self.real_features_cache, fake_features, self.k_nearest
+            )
+            metrics["coverage"] = coverage
+            metrics["precision"] = precision
+            self.logger.info("Computed coverage and precision.")
+
+        # Compute Jensen-Shannon Divergence
+        if self.compute_js_divergence:
+            js_div = self._compute_js_divergence(
+                self.real_features_cache, fake_features
+            )
+            metrics["js_divergence"] = js_div
+            self.logger.info("Computed JS divergence.")
+
+        # Compute Energy Distance
+        if self.compute_energy_distance:
+            energy_dist = self._compute_energy_distance(
+                self.real_features_cache, fake_features, device
+            )
+            metrics["energy_distance"] = energy_dist
+            self.logger.info("Computed energy distance.")
+
+        # Compute Density Consistency
+        if self.compute_density_consistency:
+            density_metrics = self._compute_density_consistency(
+                self.real_features_cache, fake_features
+            )
+            metrics.update(density_metrics)
+            self.logger.info("Computed density consistency.")
+
+        # Compute Mode Collapse Metrics
+        if self.compute_mode_collapse:
+            mode_metrics = self._compute_mode_collapse_metrics(fake_features)
+            metrics.update(mode_metrics)
+            self.logger.info("Computed mode collapse metrics.")
+
+        # Compute Diversity Metrics
+        if self.compute_diversity_metrics:
+            diversity_metrics = self._compute_diversity_metrics(fake_features, device)
+            metrics.update(diversity_metrics)
+            self.logger.info("Computed diversity metrics.")
+
+        return metrics
 
 
 class MetricTracker(Callback):
@@ -633,10 +522,38 @@ class MetricTracker(Callback):
             self.train_losses.append(loss.item())
 
 
-def create_evaluation_callback(
+class EvaluationMixin:
+    """
+    Mixin class to add evaluation capabilities to any LightningModule.
+    """
+
+    def setup_evaluation(self, evaluator_config):
+        """Initialize the evaluator with given config"""
+        self.evaluator = GenerativeModelEvaluator(**evaluator_config)
+
+    def setup_evaluator(self, stage=None):
+        """Setup evaluator - call in Lightning model setup"""
+        if stage == "fit" and hasattr(self, "evaluator"):
+            self.evaluator.setup_feature_extractor(self.device)
+            # Cache real data - get dataloader from trainer
+            val_dataloader = self.trainer.datamodule.val_dataloader()
+            self.evaluator.cache_real_data(val_dataloader, self.device)
+
+    def run_evaluation(self):
+        """Run evaluation if it's time"""
+        if not hasattr(self, "evaluator"):
+            return {}
+
+        if self.current_epoch % self.evaluator.eval_every_n_epochs != 0:
+            return {}
+
+        return self.evaluator.evaluate(self, self.device)
+
+
+def create_evaluation_config(
     log, cfg, model_type="diffusion", evaluation_level="standard"
 ):
-    """Create appropriate evaluation callback"""
+    """Create appropriate evaluation config dictionary"""
 
     if cfg.main.dataset.lower() in ["two_moons", "2d_gaussians"]:
         data_type = "2d"
@@ -645,81 +562,86 @@ def create_evaluation_callback(
 
     if evaluation_level == "minimal":
         # Fastest evaluation - core metrics only
-        return FastEvaluationCallback(
-            log,
-            model_type=model_type,
-            dataset_type=data_type,
-            eval_every_n_epochs=5,
-            num_samples=500,
-            feature_extractor="mobilenet" if data_type == "image" else None,
-            cache_dir="./weights",
-            compute_coverage_precision=True,
-            compute_mmd=True,
-            compute_wasserstein=False,  # Skip for speed
-            compute_js_divergence=False,
-            compute_energy_distance=False,
-            compute_density_consistency=False,
-            compute_mode_collapse=True,  # Important for generative models
-            compute_spectral_metrics=False,
-            compute_diversity_metrics=False,
-        )
+        return {
+            "logger": log,
+            "model_type": model_type,
+            "dataset_type": data_type,
+            "eval_every_n_epochs": 5,
+            "num_samples": 500,
+            "feature_extractor": "mobilenet" if data_type == "image" else None,
+            "cache_dir": "./weights",
+            "compute_coverage_precision": True,
+            "compute_mmd": True,
+            "compute_wasserstein": False,  # Skip for speed
+            "compute_js_divergence": False,
+            "compute_energy_distance": False,
+            "compute_density_consistency": False,
+            "compute_mode_collapse": True,  # Important for generative models
+            "compute_diversity_metrics": False,
+            "k_nearest": 5,
+            "mmd_kernel": "rbf",
+        }
 
     elif evaluation_level == "comprehensive":
         # Full evaluation suite
-        return FastEvaluationCallback(
-            log,
-            model_type=model_type,
-            dataset_type=data_type,
-            eval_every_n_epochs=10,
-            num_samples=2000,
-            feature_extractor="mobilenet" if data_type == "image" else None,
-            cache_dir="./weights",
-            compute_coverage_precision=True,
-            compute_mmd=True,
-            compute_wasserstein=True,
-            compute_js_divergence=True,
-            compute_energy_distance=True,
-            compute_density_consistency=True,
-            compute_mode_collapse=True,
-            compute_spectral_metrics=True,
-            compute_diversity_metrics=True,
-        )
+        return {
+            "logger": log,
+            "model_type": model_type,
+            "dataset_type": data_type,
+            "eval_every_n_epochs": 10,
+            "num_samples": 2000,
+            "feature_extractor": "mobilenet" if data_type == "image" else None,
+            "cache_dir": "./weights",
+            "compute_coverage_precision": True,
+            "compute_mmd": True,
+            "compute_wasserstein": True,
+            "compute_js_divergence": True,
+            "compute_energy_distance": True,
+            "compute_density_consistency": True,
+            "compute_mode_collapse": True,
+            "compute_diversity_metrics": True,
+            "k_nearest": 5,
+            "mmd_kernel": "rbf",
+        }
 
     else:  # 'standard'
         if data_type == "image":
-            return FastEvaluationCallback(
-                log,
-                model_type=model_type,
-                dataset_type=data_type,
-                eval_every_n_epochs=10,  # Less frequent for images
-                num_samples=500,  # Moderate sample size
-                feature_extractor="mobilenet",
-                cache_dir="./weights",
-                compute_coverage_precision=True,
-                compute_mmd=True,
-                compute_wasserstein=True,
-                compute_js_divergence=True,
-                compute_energy_distance=False,  # Skip for images (expensive)
-                compute_density_consistency=True,
-                compute_mode_collapse=True,
-                compute_spectral_metrics=True,
-                compute_diversity_metrics=True,
-            )
+            return {
+                "logger": log,
+                "model_type": model_type,
+                "dataset_type": data_type,
+                "eval_every_n_epochs": 10,  # Less frequent for images
+                "num_samples": 500,  # Moderate sample size
+                "feature_extractor": "mobilenet",
+                "cache_dir": "./weights",
+                "compute_coverage_precision": True,
+                "compute_mmd": True,
+                "compute_wasserstein": True,
+                "compute_js_divergence": True,
+                "compute_energy_distance": False,  # Skip for images (expensive)
+                "compute_density_consistency": True,
+                "compute_mode_collapse": True,
+                "compute_diversity_metrics": True,
+                "k_nearest": 5,
+                "mmd_kernel": "rbf",
+            }
         else:  # 2D or low-dimensional data
-            return FastEvaluationCallback(
-                log,
-                model_type=model_type,
-                dataset_type=data_type,
-                eval_every_n_epochs=5,
-                num_samples=2000,  # More samples for better statistics
-                feature_extractor=None,  # No feature extraction needed
-                compute_coverage_precision=True,
-                compute_mmd=True,
-                compute_wasserstein=True,
-                compute_js_divergence=True,
-                compute_energy_distance=True,
-                compute_density_consistency=True,
-                compute_mode_collapse=True,
-                compute_spectral_metrics=True,
-                compute_diversity_metrics=True,
-            )
+            return {
+                "logger": log,
+                "model_type": model_type,
+                "dataset_type": data_type,
+                "eval_every_n_epochs": 5,
+                "num_samples": 2000,  # More samples for better statistics
+                "feature_extractor": None,  # No feature extraction needed
+                "cache_dir": "./weights",
+                "compute_coverage_precision": True,
+                "compute_mmd": True,
+                "compute_wasserstein": True,
+                "compute_js_divergence": True,
+                "compute_energy_distance": True,
+                "compute_density_consistency": True,
+                "compute_mode_collapse": True,
+                "compute_diversity_metrics": True,
+                "k_nearest": 5,
+                "mmd_kernel": "rbf",
+            }

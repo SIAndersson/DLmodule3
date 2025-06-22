@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,8 +8,6 @@ import seaborn as sns
 import torch
 import torchvision
 
-from utils.callbacks import FastEvaluationCallback
-
 # Set the aesthetic style
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 plt.rcParams["figure.dpi"] = 100
@@ -17,7 +15,8 @@ plt.rcParams["savefig.dpi"] = 300
 
 
 def plot_evaluation_metrics(
-    callback: FastEvaluationCallback,
+    metrics_history: Dict,
+    model_type: str,
     figsize: Optional[Tuple[int, int]] = None,
     palette: str = "colorblind",
     highlight_color: str = "red",
@@ -44,8 +43,6 @@ def plot_evaluation_metrics(
     """
 
     # Get metrics history
-    metrics_history = callback.get_metrics_history()
-
     print(metrics_history)
 
     # Check if we have data
@@ -217,18 +214,13 @@ def plot_evaluation_metrics(
     # Add overall title
     fig.suptitle("Evaluation Metrics History", fontsize=16, fontweight="bold", y=0.98)
 
-    model_name = (
-        "Flow matching" if callback.model_type == "vector_field" else "diffusion"
-    )
+    model_name = "Flow matching" if model_type == "vector_field" else "diffusion"
 
     # Add summary statistics as text
     summary_text = f"""
     Training Summary:
     • Total Epochs: {len(epochs)}
-    • Evaluation Frequency: Every {callback.eval_every_n_epochs} epochs
-    • Samples per Evaluation: {callback.num_samples:,}
     • Model Type: {model_name.title()}
-    • Dataset Type: {callback.dataset_type.upper()}
     """
 
     fig.text(
@@ -256,105 +248,16 @@ def plot_evaluation_metrics(
     return fig
 
 
-def plot_metrics_comparison(
-    callback: FastEvaluationCallback,
-    metrics_to_compare: List[str],
-    normalize: bool = True,
-    figsize: Tuple[int, int] = (12, 8),
-    save_path: Optional[str] = None,
-) -> plt.Figure:
-    """
-    Create a comparison plot of selected metrics on the same axes.
-
-    Args:
-        callback: FastEvaluationCallback instance
-        metrics_to_compare: List of metric names to compare
-        normalize: Whether to normalize metrics to [0, 1] for comparison
-        figsize: Figure size
-        save_path: Path to save figure
-
-    Returns:
-        matplotlib Figure object
-    """
-
-    metrics_history = callback.get_metrics_history()
-    epochs = np.array(metrics_history["epoch"])
-
-    # Validate metrics
-    valid_metrics = [
-        m
-        for m in metrics_to_compare
-        if m in metrics_history and len(metrics_history[m]) > 0
-    ]
-
-    if not valid_metrics:
-        raise ValueError("No valid metrics found for comparison.")
-
-    fig, ax = plt.subplots(figsize=figsize)
-
-    colors = sns.color_palette("husl", len(valid_metrics))
-
-    for i, metric in enumerate(valid_metrics):
-        values = np.array(metrics_history[metric])
-
-        if normalize:
-            # Normalize to [0, 1]
-            values_norm = (values - values.min()) / (
-                values.max() - values.min() + 1e-10
-            )
-            ax.plot(
-                epochs,
-                values_norm,
-                color=colors[i],
-                linewidth=2.5,
-                label=f"{metric.replace('_', ' ').title()} (normalized)",
-                marker="o",
-                markersize=4,
-            )
-        else:
-            ax.plot(
-                epochs,
-                values,
-                color=colors[i],
-                linewidth=2.5,
-                label=metric.replace("_", " ").title(),
-                marker="o",
-                markersize=4,
-            )
-
-    ax.set_xlabel("Epoch", fontsize=12)
-    ax.set_ylabel("Metric Value" + (" (Normalized)" if normalize else ""), fontsize=12)
-    ax.set_title("Metrics Comparison Over Training", fontsize=14, fontweight="bold")
-    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-
-    if save_path:
-        # Determine the root directory (two levels up from this file)
-        root_dir = Path(__file__).resolve().parent.parent.parent
-        eval_dir = root_dir / "evaluation_plots"
-        eval_dir.mkdir(exist_ok=True)
-        save_file = eval_dir / save_path
-        plt.savefig(save_file, bbox_inches="tight", facecolor="white")
-        print(f"Figure saved to: {save_file}")
-
-    return fig
-
-
-def create_metrics_summary_table(callback: "FastEvaluationCallback") -> pd.DataFrame:
+def create_metrics_summary_table(metrics_history: Dict) -> pd.DataFrame:
     """
     Create a summary table of final metric values with statistics.
 
     Args:
-        callback: FastEvaluationCallback instance
+        metrics_history: Dict of validation metrics
 
     Returns:
         pandas DataFrame with metrics summary
     """
-
-    metrics_history = callback.get_metrics_history()
-
     summary_data = []
 
     for metric, values in metrics_history.items():

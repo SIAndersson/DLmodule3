@@ -171,15 +171,33 @@ class GenerativeDataModule(pl.LightningDataModule):
         if self.data_tensor is None:
             self.data_tensor = create_dataset(self.cfg, self.logger)
 
-        # Create dataset
-        self.dataset = TensorDataset(self.data_tensor)
+        # Create train/val split
+        val_size = getattr(self.cfg.main, "val_size", 0.1)  # Default to 0.1 if not set
+        dataset = TensorDataset(self.data_tensor)
+        n_total = len(dataset)
+        n_val = int(n_total * val_size)
+        n_train = n_total - n_val
+        self.train_dataset, self.val_dataset = torch.utils.data.random_split(
+            dataset,
+            [n_train, n_val],
+            generator=torch.Generator().manual_seed(self.cfg.main.seed),
+        )
 
     # Lightning automatically sorts distributed sampler etc
     def train_dataloader(self):
         return DataLoader(
-            self.dataset,
+            self.train_dataset,
             batch_size=self.cfg.main.batch_size,
             shuffle=True,
+            num_workers=0,
+            pin_memory=True,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.cfg.main.batch_size,
+            shuffle=False,
             num_workers=0,
             pin_memory=True,
         )

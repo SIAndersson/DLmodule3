@@ -1,4 +1,5 @@
 import logging
+from typing import Dict
 
 import hydra
 import matplotlib.pyplot as plt
@@ -9,7 +10,7 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import AdamW
 
-from utils.callbacks import MetricTracker, create_evaluation_callback
+from utils.callbacks import EvaluationMixin, MetricTracker, create_evaluation_config
 from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
@@ -34,7 +35,7 @@ if torch.cuda.is_available():
         print("Tensor cores enabled globally")
 
 
-class DiffusionModel(pl.LightningModule):
+class DiffusionModel(pl.LightningModule, EvaluationMixin):
     """
     Denoising Diffusion Probabilistic Model (DDPM) implementation
 
@@ -59,6 +60,7 @@ class DiffusionModel(pl.LightningModule):
     def __init__(
         self,
         model_cfg: DictConfig,
+        evaluator_config: Dict,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -70,6 +72,25 @@ class DiffusionModel(pl.LightningModule):
         self.num_layers = model_cfg.num_layers
         self.time_embed_dim = model_cfg.time_embed_dim
         self.weight_decay = model_cfg.weight_decay
+        # Store metrics history
+        self.metrics_history = {
+            "epoch": [],
+            "wasserstein_distance": [],
+            "mmd": [],
+            "coverage": [],
+            "precision": [],
+            "js_divergence": [],
+            "energy_distance": [],
+            "density_ks_stat": [],
+            "log_density_ratio": [],
+            "mode_collapse_score": [],
+            "duplicate_ratio": [],
+            "mean_pairwise_distance": [],
+            "min_pairwise_distance": [],
+            "std_pairwise_distance": [],
+            "distance_entropy": [],
+        }
+        self.val_metrics = []
 
         # Initialize the denoising network
         if model_cfg.model_type.upper() == "MLP":
@@ -91,6 +112,8 @@ class DiffusionModel(pl.LightningModule):
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
+        self.setup_evaluation(evaluator_config)
+
         # Pre-compute diffusion schedule parameters
         self.register_buffer("betas", self._cosine_beta_schedule(self.num_timesteps))
         self.register_buffer("alphas", 1.0 - self.betas)
@@ -102,6 +125,9 @@ class DiffusionModel(pl.LightningModule):
 
         # For reverse process
         self.register_buffer("sqrt_recip_alphas", torch.sqrt(1.0 / self.alphas))
+
+    def setup(self, stage=None):
+        self.setup_evaluator(stage)
 
     def _cosine_beta_schedule(self, timesteps, s=0.008):
         """
@@ -192,8 +218,33 @@ class DiffusionModel(pl.LightningModule):
         self.log("train_loss", loss)
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        val_metrics = self.run_evaluation()
+        for k, v in val_metrics.items():
+            self.log(f"eval/{k}", v, sync_dist=True, on_epoch=True)
+        self.val_metrics.append(val_metrics)
+
+    def on_validation_epoch_end(self):
+        if self.val_metrics and len(self.val_metrics) > 0:
+            self.metrics_history["epoch"].append(self.current_epoch)
+            # Get all keys from the first dict (since all dicts have the same keys)
+            keys = self.val_metrics[0].keys()
+            for key in keys:
+                # Collect all values for this key across all dicts
+                values = [d[key] for d in self.val_metrics]
+                # Compute the mean
+                mean_value = torch.mean(
+                    torch.tensor(values, dtype=torch.float32)
+                ).item()
+                # Append the mean to the history
+                self.metrics_history[key].append(mean_value)
+        self.val_metrics.clear()
+
     def configure_optimizers(self):
         return AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+
+    def get_metrics_history(self):
+        return self.metrics_history
 
     @torch.no_grad()
     def p_sample(self, x, t):
@@ -365,7 +416,10 @@ def main(cfg: DictConfig):
 
     # Initialize model
     log.info("Initializing diffusion model...")
-    model = DiffusionModel(cfg.model)
+    eval_config = create_evaluation_config(
+        log, cfg, model_type="diffusion", evaluation_level="standard"
+    )
+    model = DiffusionModel(cfg.model, eval_config)
 
     # Find appropriate values
     if torch.cuda.is_available():
@@ -385,15 +439,12 @@ def main(cfg: DictConfig):
     # Train model
     log.info("Training model...")
     tracker = MetricTracker()
-    eval_callback = create_evaluation_callback(
-        log, cfg, model_type="diffusion", evaluation_level="standard"
-    )
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        callbacks=[tracker, eval_callback],
+        callbacks=[tracker],
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
@@ -428,13 +479,14 @@ def main(cfg: DictConfig):
         save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
         plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
 
+    metrics_history = model.get_metrics_history()
     fig = plot_evaluation_metrics(
-        eval_callback,
+        metrics_history,
         save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.png",
     )
     plt.close()
     # Get summary table
-    summary_df = create_metrics_summary_table(eval_callback)
+    summary_df = create_metrics_summary_table(metrics_history)
     print(summary_df)
 
 
