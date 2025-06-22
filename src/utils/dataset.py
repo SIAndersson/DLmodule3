@@ -1,12 +1,14 @@
-import torch
-from sklearn.datasets import make_moons
-from omegaconf import DictConfig
 import logging
-from datasets import load_dataset
-from torchvision import transforms
-import random
-from dotenv import load_dotenv
 import os
+import random
+from pathlib import Path
+
+import torch
+from datasets import load_dataset
+from dotenv import load_dotenv
+from omegaconf import DictConfig
+from sklearn.datasets import make_moons
+from torchvision import transforms
 
 load_dotenv()
 
@@ -25,6 +27,19 @@ def load_huggingface_data(
     Returns:
         data_tensor (Tensor): A PyTorch Tensor containing image data.
     """
+
+    # Obtain dataset file name
+    dataset_base = dataset_name.split("/")[-1]
+    filename = dataset_base
+    if test:
+        filename += "_test"
+    save_path = Path(__file__).parent.parent / "data" / f"{filename}.pt"
+
+    # Check if dataset file exists
+    if save_path.exists():
+        logger.info(f"Loading dataset tensor from {save_path}")
+        all_tensors = torch.load(save_path)
+        return all_tensors
 
     # Load dataset from Huggingface
     dataset = load_dataset(
@@ -73,6 +88,10 @@ def load_huggingface_data(
 
     # Concatenate all batches into a single tensor
     all_tensors = torch.tensor(all_pixel_values)  # Final shape (N, C, H, W)
+
+    # Save tensor to ./data directory with appropriate filename using pathlib.Path
+    torch.save(all_tensors, save_path)
+
     logger.info(f"Min: {all_tensors.min()}, Max: {all_tensors.max()}")
     logger.debug(f"Final shape: {all_tensors.shape}")
 
