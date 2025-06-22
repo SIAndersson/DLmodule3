@@ -3,14 +3,15 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
+import torchvision.models as models
+import torchvision.transforms as transforms
 from dotenv import load_dotenv
 from pytorch_lightning.callbacks import Callback
-from scipy.spatial.distance import cdist
-from scipy.stats import wasserstein_distance
+from scipy.spatial.distance import jensenshannon
+from scipy.stats import entropy, kstest, wasserstein_distance
+from sklearn.metrics.pairwise import polynomial_kernel, rbf_kernel
 from sklearn.neighbors import NearestNeighbors
-from torchmetrics.image.fid import FrechetInceptionDistance
-from torchvision.utils import save_image
 
 load_dotenv()
 
@@ -62,85 +63,6 @@ def cov(m, rowvar=False):
     return fact * m.matmul(mt).squeeze()
 
 
-# This is SO EXTREMELY SLOW
-class EvaluateSamplesCallback(Callback):
-    def __init__(
-        self, num_samples=500, save_dir="eval_outputs", model_type="vector_field"
-    ):
-        self.num_samples = num_samples
-        self.save_dir = Path(save_dir)
-        self.fid = FrechetInceptionDistance(
-            normalize=True, feature_extractor_weights_path=DATASET_CACHE
-        )
-        self.model_type = model_type
-
-    def _denormalize(self, img):
-        # [-1, 1] -> [0, 1]
-        return (img + 1) / 2.0
-
-    def _generate_and_collect(self, model, dataloader):
-        real_imgs = []
-        fake_imgs = []
-
-        model.eval()
-        with torch.no_grad():
-            for batch in dataloader:
-                x = batch[0] if isinstance(batch, (list, tuple)) else batch
-
-                # Break if we have enough
-                if len(real_imgs) * x.size(0) >= self.num_samples:
-                    break
-
-                # Generate samples
-                if hasattr(model, "sample"):
-                    if self.model_type == "vector_field":
-                        x_hat = model.sample(x.shape[0], model.device)  # Batch size
-                    elif self.model_type == "diffusion":
-                        x_hat = model.sample(x.shape, model.device)
-                    else:
-                        raise ValueError(f"Unsupported model type: {self.model_type}")
-                else:
-                    print("Model lacks sample() method")
-                    break
-
-                # Store real and fake
-                real_imgs.append(self._denormalize(x))
-                fake_imgs.append(self._denormalize(x_hat))
-
-        real_imgs = torch.cat(real_imgs, dim=0)[: self.num_samples].to(x.device)
-        fake_imgs = torch.cat(fake_imgs, dim=0)[: self.num_samples].to(x.device)
-        return real_imgs, fake_imgs
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        try:
-            model_head = pl_module.hparams.model_cfg.model_type
-        except AttributeError:
-            print("model_type not found in hparams — skipping evaluation.")
-            return
-
-        if model_head.upper() != "CNN":
-            print("Skipping evaluation (non-CNN model)")
-            return
-
-        dataloader = trainer.train_dataloader
-        real_imgs, fake_imgs = self._generate_and_collect(pl_module, dataloader)
-
-        self.fid.reset()
-        self.fid.update(real_imgs.to(real_imgs.device), real=True)
-        self.fid.update(fake_imgs.to(fake_imgs.device), real=False)
-        fid_score = self.fid.compute().item()
-
-        # Save sample grid
-        grid_path = (
-            self.save_dir
-            / f"{self.model_type}_generated_samples_epoch{trainer.current_epoch}.png"
-        )
-        self.save_dir.mkdir(parents=True, exist_ok=True)
-        save_image(fake_imgs[:16], grid_path, nrow=4)
-
-        pl_module.log("fid", fid_score, on_epoch=True, prog_bar=True)
-
-
 # The cooler Daniel (the faster callback)
 class FastEvaluationCallback(Callback):
     """
@@ -150,418 +72,583 @@ class FastEvaluationCallback(Callback):
 
     def __init__(
         self,
-        real_data: torch.Tensor,
-        dataset_type: str = "2d",  # "2d" or "image"
-        model_type: str = "vector_field",  # "vector_field" or "diffusion"
-        eval_samples: int = 1000,  # Number of samples to generate for evaluation
-        eval_frequency: int = 10,  # Evaluate every N epochs
-        k_nearest: int = 5,  # For coverage/precision metrics
-        # New parameters for optimization
-        use_lightweight_metrics: bool = True,  # Use FD instead of KID/IS
-        feature_dim: int = 512,  # Dimension for lightweight feature extractor
-        batch_size: int = 64,  # Batch size for feature extraction
-        max_eval_samples: int = 500,  # Cap samples for image metrics
+        model_type="vector_field",  # vector_field or diffusion
+        dataset_type="2d",  # 2d or image
+        eval_every_n_epochs=5,
+        num_samples=1000,
+        batch_size=100,
+        feature_extractor="mobilenet",  # 'mobilenet', 'resnet18', or None
+        cache_dir="./model_cache",
+        compute_coverage_precision=True,
+        compute_mmd=True,
+        compute_wasserstein=True,
+        compute_js_divergence=True,
+        compute_energy_distance=True,
+        compute_density_consistency=True,
+        compute_mode_collapse=True,
+        compute_spectral_metrics=True,
+        compute_diversity_metrics=True,
+        k_nearest=5,  # for coverage/precision
+        mmd_kernel="rbf",  # 'rbf' or 'polynomial'
+        device="auto",
     ):
-        super().__init__()
-        self.real_data = real_data
-        self.dataset_type = dataset_type.lower()
-        self.eval_samples = eval_samples
-        self.eval_frequency = eval_frequency
-        self.k_nearest = k_nearest
-        self.model_type = model_type.lower()
-        self.use_lightweight_metrics = use_lightweight_metrics
-        self.feature_dim = feature_dim
+        self.model_type = model_type
+        self.dataset_type = dataset_type
+        self.eval_every_n_epochs = eval_every_n_epochs
+        self.num_samples = num_samples
         self.batch_size = batch_size
-        self.max_eval_samples = max_eval_samples
+        self.feature_extractor_name = feature_extractor
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(exist_ok=True)
+        self.compute_coverage_precision = compute_coverage_precision
+        self.compute_mmd = compute_mmd
+        self.compute_wasserstein = compute_wasserstein
+        self.compute_js_divergence = compute_js_divergence
+        self.compute_energy_distance = compute_energy_distance
+        self.compute_density_consistency = compute_density_consistency
+        self.compute_mode_collapse = compute_mode_collapse
+        self.compute_spectral_metrics = compute_spectral_metrics
+        self.compute_diversity_metrics = compute_diversity_metrics
+        self.k_nearest = k_nearest
+        self.mmd_kernel = mmd_kernel
+        self.device = device
 
-        # Precompute real data statistics
-        self.real_data_cpu = real_data.cpu().numpy()
-
-        if self.dataset_type == "image":
-            if self.use_lightweight_metrics:
-                # Use a lightweight CNN feature extractor instead of Inception
-                self.feature_extractor = self._create_lightweight_extractor()
-            else:
-                # Use smaller, more efficient model than full Inception
-                self.feature_extractor = self._create_efficient_inception()
-
-            self.feature_extractor.eval()
-
-            # Precompute real data features with reduced samples
-            real_subset_size = min(len(real_data), self.max_eval_samples)
-            real_subset_indices = torch.randperm(len(real_data))[:real_subset_size]
-            real_subset = real_data[real_subset_indices]
-            self._precompute_real_features(real_subset)
+        self.feature_extractor = None
+        self.real_features_cache = None
+        self.real_samples_cache = None
 
         # Store metrics history
         self.metrics_history = {
             "epoch": [],
-            "wasserstein_dist": [],
+            "wasserstein_distance": [],
+            "mmd": [],
             "coverage": [],
             "precision": [],
-            "mmd": [],
+            "js_divergence": [],
+            "energy_distance": [],
+            "density_ks_stat": [],
+            "log_density_ratio": [],
+            "mode_collapse_score": [],
+            "duplicate_ratio": [],
+            "spectral_divergence": [],
+            "condition_number_ratio": [],
+            "mean_pairwise_distance": [],
+            "min_pairwise_distance": [],
+            "std_pairwise_distance": [],
+            "distance_entropy": [],
         }
 
-        if self.dataset_type == "image":
-            if self.use_lightweight_metrics:
-                self.metrics_history.update(
-                    {"frechet_distance": [], "lpips_diversity": []}
-                )
-            else:
-                self.metrics_history.update({"inception_score": [], "kid_score": []})
+    def setup(self, trainer, pl_module, stage=None):
+        """Setup feature extractor and cache real data features"""
+        if self.device == "auto":
+            self.device = pl_module.device
 
-    def _create_lightweight_extractor(self):
-        """Create a lightweight CNN feature extractor"""
+        # Setup feature extractor if needed
+        if (
+            self.feature_extractor_name and pl_module.input_dim > 2
+        ):  # Assume images if dim > 2
+            self._setup_feature_extractor()
 
-        class LightweightExtractor(torch.nn.Module):
-            def __init__(self, feature_dim=512):
-                super().__init__()
-                # Simple but effective feature extractor
-                self.features = torch.nn.Sequential(
-                    torch.nn.Conv2d(3, 64, 3, 2, 1),  # 264->132
-                    torch.nn.ReLU(inplace=True),
-                    torch.nn.Conv2d(64, 128, 3, 2, 1),  # 132->66
-                    torch.nn.ReLU(inplace=True),
-                    torch.nn.Conv2d(128, 256, 3, 2, 1),  # 66->33
-                    torch.nn.ReLU(inplace=True),
-                    torch.nn.Conv2d(256, 512, 3, 2, 1),  # 33->17
-                    torch.nn.ReLU(inplace=True),
-                    torch.nn.AdaptiveAvgPool2d((4, 4)),  # 17->4
-                    torch.nn.Flatten(),
-                    torch.nn.Linear(512 * 16, feature_dim),
-                    torch.nn.ReLU(inplace=True),
-                )
+    def _setup_feature_extractor(self):
+        """Initialize lightweight feature extractor"""
+        if self.feature_extractor_name == "mobilenet":
+            # Download to specified cache directory
+            os.environ["TORCH_HOME"] = str(self.cache_dir)
+            model = models.mobilenet_v2(pretrained=True)
+            # Remove classifier to get features
+            self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
+            self.feature_dim = 1280
 
-            def forward(self, x):
-                # Normalize input to [0, 1] if needed
-                if x.min() < 0:
-                    x = (x + 1) / 2
-                return self.features(x)
+        elif self.feature_extractor_name == "resnet18":
+            os.environ["TORCH_HOME"] = str(self.cache_dir)
+            model = models.resnet18(pretrained=True)
+            # Remove final FC layer
+            self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
+            self.feature_dim = 512
 
-        return LightweightExtractor(self.feature_dim)
+        self.feature_extractor.eval()
+        self.feature_extractor.to(self.device)
 
-    def _create_efficient_inception(self):
-        """Create a more efficient version of Inception"""
-        # Use MobileNetV2 instead of Inception - much faster
-        from torchvision.models import mobilenet_v2
+        # Image preprocessing
+        self.preprocess = transforms.Compose(
+            [
+                transforms.Resize(224),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
 
-        model = mobilenet_v2(pretrained=True)
-        # Remove classifier, keep features
-        model.classifier = torch.nn.Identity()
-        return model
-
-    def _precompute_real_features(self, real_data):
-        """Precompute features for real data to speed up evaluation"""
-        device = real_data.device
-        self.feature_extractor = self.feature_extractor.to(device)
+    def _extract_features(self, samples):
+        """Extract features from samples"""
+        if self.feature_extractor is None:
+            return samples.view(samples.shape[0], -1)  # Flatten
 
         features = []
-        with torch.no_grad():
-            for i in range(0, len(real_data), self.batch_size):
-                batch = real_data[i : i + self.batch_size]
+        for i in range(0, len(samples), self.batch_size):
+            batch = samples[i : i + self.batch_size]
 
-                if self.use_lightweight_metrics:
-                    # No resizing needed for lightweight extractor
-                    feat = self.feature_extractor(batch)
-                else:
-                    # Only resize if using MobileNet (expects 224x224)
-                    if batch.size(-1) != 224:
-                        batch = F.interpolate(
-                            batch, size=(224, 224), mode="bilinear", align_corners=False
-                        )
-                    feat = self.feature_extractor(batch)
+            # Ensure proper format for image models
+            if batch.dim() == 4 and batch.shape[1] == 3:  # RGB images
+                batch = self.preprocess(batch)
+            elif batch.dim() == 4 and batch.shape[1] == 1:  # Grayscale
+                batch = batch.repeat(1, 3, 1, 1)  # Convert to RGB
+                batch = self.preprocess(batch)
 
+            with torch.no_grad():
+                feat = self.feature_extractor(batch)
+                feat = feat.view(feat.size(0), -1)  # Flatten
                 features.append(feat.cpu())
 
-        self.real_features = torch.cat(features, dim=0)
+        return torch.cat(features, dim=0)
 
-    def on_train_epoch_end(self, trainer, pl_module):
-        """Run evaluation at the end of validation epoch"""
-        if trainer.current_epoch % self.eval_frequency != 0:
+    def _cache_real_data(self, trainer):
+        """Cache real training data features"""
+        if self.real_features_cache is not None:
             return
 
-        # Generate samples (with reduced count for images)
-        pl_module.eval()
-        device = next(pl_module.parameters()).device
+        print("Caching real data features...")
+        real_samples = []
 
-        eval_samples = self.eval_samples
-        if self.dataset_type == "image":
-            eval_samples = min(self.eval_samples, self.max_eval_samples)
+        # Sample from training data
+        train_loader = trainer.train_dataloader
+        samples_collected = 0
+
+        for batch in train_loader:
+            if isinstance(batch, (list, tuple)):
+                x = batch[0]
+            else:
+                x = batch
+
+            real_samples.append(x.cpu())
+            samples_collected += x.shape[0]
+
+            if samples_collected >= self.num_samples:
+                break
+
+        real_samples = torch.cat(real_samples, dim=0)[: self.num_samples]
+        self.real_samples_cache = real_samples
+
+        # Extract features
+        real_samples = real_samples.to(self.device)
+        self.real_features_cache = self._extract_features(real_samples).cpu()
+        print(f"Cached {len(self.real_features_cache)} real samples")
+
+    def _generate_samples(self, pl_module):
+        """Generate samples from the model"""
+        pl_module.eval()
+        generated_samples = []
 
         with torch.no_grad():
-            if self.dataset_type == "2d":
-                if self.model_type == "vector_field":
-                    generated_samples = pl_module.sample(eval_samples, device)
-                elif self.model_type == "diffusion":
-                    generated_samples = pl_module.sample((eval_samples, 2), device)
-                else:
-                    raise ValueError(f"Unknown model type: {self.model_type}")
-            else:  # image
-                if self.model_type == "vector_field":
-                    generated_samples = pl_module.fast_sample(eval_samples, device)
-                elif self.model_type == "diffusion":
-                    generated_samples = pl_module.ddim_sample(
-                        (eval_samples, 3, 264, 264), device
-                    )
-                else:
-                    raise ValueError(f"Unknown model type: {self.model_type}")
+            for _ in range(0, self.num_samples, self.batch_size):
+                current_batch_size = min(
+                    self.batch_size,
+                    self.num_samples - len(generated_samples) * self.batch_size,
+                )
 
-        # Compute metrics
-        metrics = self._compute_metrics(generated_samples, device)
+                if self.dataset_type == "2d":
+                    if self.model_type == "vector_field":
+                        samples = pl_module.fast_sample(current_batch_size, self.device)
+                    elif self.model_type == "diffusion":
+                        samples = pl_module.ddim_sample(
+                            (current_batch_size, 2), self.device
+                        )
+                    else:
+                        raise ValueError(f"Unknown model type: {self.model_type}")
+                else:  # image
+                    if self.model_type == "vector_field":
+                        samples = pl_module.fast_sample(current_batch_size, self.device)
+                    elif self.model_type == "diffusion":
+                        samples = pl_module.ddim_sample(
+                            (current_batch_size, 3, 264, 264), self.device
+                        )
+                    else:
+                        raise ValueError(f"Unknown model type: {self.model_type}")
+                    generated_samples.append(samples.cpu())
+
+        return torch.cat(generated_samples, dim=0)
+
+    def _compute_wasserstein_distance(self, real_features, fake_features):
+        """Compute 1-Wasserstein distance"""
+        if real_features.shape[1] > 1:
+            # For high-dimensional data, compute per-dimension and average
+            distances = []
+            for dim in range(
+                min(real_features.shape[1], 10)
+            ):  # Limit to first 10 dims for speed
+                wd = wasserstein_distance(
+                    real_features[:, dim].numpy(), fake_features[:, dim].numpy()
+                )
+                distances.append(wd)
+            return np.mean(distances)
+        else:
+            return wasserstein_distance(
+                real_features.flatten().numpy(), fake_features.flatten().numpy()
+            )
+
+    def _compute_mmd(self, real_features, fake_features, kernel="rbf"):
+        """Compute Maximum Mean Discrepancy"""
+        X = real_features.numpy()
+        Y = fake_features.numpy()
+
+        if kernel == "rbf":
+            # Use multiple bandwidths for better results
+            bandwidths = [0.1, 1.0, 10.0]
+            mmd_vals = []
+
+            for bw in bandwidths:
+                K_XX = rbf_kernel(X, X, gamma=1 / (2 * bw**2))
+                K_YY = rbf_kernel(Y, Y, gamma=1 / (2 * bw**2))
+                K_XY = rbf_kernel(X, Y, gamma=1 / (2 * bw**2))
+
+                mmd_val = K_XX.mean() + K_YY.mean() - 2 * K_XY.mean()
+                mmd_vals.append(mmd_val)
+
+            return np.mean(mmd_vals)
+
+        elif kernel == "polynomial":
+            K_XX = polynomial_kernel(X, X, degree=2)
+            K_YY = polynomial_kernel(Y, Y, degree=2)
+            K_XY = polynomial_kernel(X, Y, degree=2)
+
+            return K_XX.mean() + K_YY.mean() - 2 * K_XY.mean()
+
+    def _compute_coverage_precision(self, real_features, fake_features, k=5):
+        """Compute Coverage and Precision metrics using k-NN"""
+        real_np = real_features.numpy()
+        fake_np = fake_features.numpy()
+
+        # Fit k-NN on real data
+        real_nn = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
+        real_nn.fit(real_np)
+
+        # Fit k-NN on fake data
+        fake_nn = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
+        fake_nn.fit(fake_np)
+
+        # Coverage: fraction of real samples whose k-NN sphere contains at least one fake sample
+        real_distances, _ = real_nn.kneighbors(real_np)
+        real_radii = real_distances[:, k]  # k-th nearest neighbor distance
+
+        fake_to_real_distances, _ = fake_nn.kneighbors(real_np)
+        fake_to_real_min_dist = fake_to_real_distances[:, 1]  # closest fake sample
+
+        coverage = (fake_to_real_min_dist < real_radii).mean()
+
+        # Precision: fraction of fake samples whose k-NN sphere contains at least one real sample
+        fake_distances, _ = fake_nn.kneighbors(fake_np)
+        fake_radii = fake_distances[:, k]
+
+        real_to_fake_distances, _ = real_nn.kneighbors(fake_np)
+        real_to_fake_min_dist = real_to_fake_distances[:, 1]
+
+        precision = (real_to_fake_min_dist < fake_radii).mean()
+
+        return coverage, precision
+
+    def _compute_js_divergence(self, real_features, fake_features, bins=50):
+        """Compute Jensen-Shannon divergence between feature distributions"""
+        js_divs = []
+
+        # Compute for each feature dimension (limit to first 10 for speed)
+        n_dims = min(real_features.shape[1], 10)
+
+        for dim in range(n_dims):
+            real_vals = real_features[:, dim].numpy()
+            fake_vals = fake_features[:, dim].numpy()
+
+            # Create histograms with same bins
+            min_val = min(real_vals.min(), fake_vals.min())
+            max_val = max(real_vals.max(), fake_vals.max())
+
+            if max_val == min_val:
+                js_divs.append(0.0)
+                continue
+
+            bins_edges = np.linspace(min_val, max_val, bins + 1)
+
+            real_hist, _ = np.histogram(real_vals, bins=bins_edges, density=True)
+            fake_hist, _ = np.histogram(fake_vals, bins=bins_edges, density=True)
+
+            # Add small epsilon to avoid log(0)
+            eps = 1e-10
+            real_hist = real_hist + eps
+            fake_hist = fake_hist + eps
+
+            # Normalize
+            real_hist = real_hist / real_hist.sum()
+            fake_hist = fake_hist / fake_hist.sum()
+
+            js_div = jensenshannon(real_hist, fake_hist, base=2)
+            js_divs.append(js_div)
+
+        return np.mean(js_divs)
+
+    def _compute_energy_distance(self, real_features, fake_features):
+        """Compute Energy Distance between two samples"""
+        X = real_features.numpy()
+        Y = fake_features.numpy()
+
+        # Subsample for efficiency if datasets are large
+        if len(X) > 500:
+            idx_x = np.random.choice(len(X), 500, replace=False)
+            X = X[idx_x]
+        if len(Y) > 500:
+            idx_y = np.random.choice(len(Y), 500, replace=False)
+            Y = Y[idx_y]
+
+        # Compute pairwise distances
+        def pairwise_distances(A, B):
+            return np.sqrt(((A[:, None, :] - B[None, :, :]) ** 2).sum(axis=2))
+
+        # E[|X-Y|]
+        dXY = pairwise_distances(X, Y).mean()
+
+        # E[|X-X'|]
+        dXX = pairwise_distances(X, X).mean()
+
+        # E[|Y-Y'|]
+        dYY = pairwise_distances(Y, Y).mean()
+
+        energy_distance = 2 * dXY - dXX - dYY
+        return energy_distance
+
+    def _compute_density_consistency(self, real_features, fake_features, k=5):
+        """Measure how well fake samples match real data density using k-NN density estimation"""
+        real_np = real_features.numpy()
+        fake_np = fake_features.numpy()
+
+        # Fit k-NN on real data for density estimation
+        nn = NearestNeighbors(n_neighbors=k + 1)
+        nn.fit(real_np)
+
+        # Get k-NN distances for real samples (exclude self)
+        real_distances, _ = nn.kneighbors(real_np)
+        real_densities = 1.0 / (real_distances[:, k] + 1e-10)  # k-th neighbor distance
+
+        # Get k-NN distances for fake samples
+        fake_distances, _ = nn.kneighbors(fake_np)
+        fake_densities = 1.0 / (fake_distances[:, k] + 1e-10)
+
+        # Compare density distributions using KS test
+        ks_stat, _ = kstest(fake_densities, real_densities)
+
+        # Also compute density ratio statistics
+        density_ratio = np.log(fake_densities.mean() / real_densities.mean() + 1e-10)
+
+        return {"density_ks_stat": ks_stat, "log_density_ratio": density_ratio}
+
+    def _compute_mode_collapse_metrics(self, fake_features, k=10):
+        """Detect mode collapse using intra-cluster distance and nearest neighbor analysis"""
+        fake_np = fake_features.numpy()
+
+        if len(fake_np) < k:
+            return {"mode_collapse_score": 0.0, "duplicate_ratio": 0.0}
+
+        # Fit k-NN on fake samples
+        nn = NearestNeighbors(n_neighbors=k + 1)
+        nn.fit(fake_np)
+
+        distances, indices = nn.kneighbors(fake_np)
+
+        # Mode collapse score: average distance to k-th nearest neighbor
+        # Lower values indicate potential mode collapse
+        knn_distances = distances[:, k]  # k-th neighbor distance
+        mode_collapse_score = knn_distances.mean()
+
+        # Duplicate detection: samples with very small nearest neighbor distance
+        duplicate_threshold = np.percentile(
+            distances[:, 1], 5
+        )  # 5th percentile of 1-NN distances
+        duplicate_ratio = (distances[:, 1] < duplicate_threshold).mean()
+
+        return {
+            "mode_collapse_score": mode_collapse_score,
+            "duplicate_ratio": duplicate_ratio,
+        }
+
+    def _compute_spectral_metrics(self, real_features, fake_features):
+        """Compute spectral properties of the feature matrices"""
+        real_np = real_features.numpy()
+        fake_np = fake_features.numpy()
+
+        # Center the data
+        real_centered = real_np - real_np.mean(axis=0)
+        fake_centered = fake_np - fake_np.mean(axis=0)
+
+        # Compute covariance matrices
+        real_cov = np.cov(real_centered.T)
+        fake_cov = np.cov(fake_centered.T)
+
+        # Compute eigenvalues
+        real_eigenvals = np.linalg.eigvals(real_cov)
+        fake_eigenvals = np.linalg.eigvals(fake_cov)
+
+        # Sort eigenvalues in descending order
+        real_eigenvals = np.sort(real_eigenvals)[::-1]
+        fake_eigenvals = np.sort(fake_eigenvals)[::-1]
+
+        # Take only positive eigenvalues and limit to top 10 for speed
+        real_eigenvals = real_eigenvals[real_eigenvals > 1e-10][:10]
+        fake_eigenvals = fake_eigenvals[fake_eigenvals > 1e-10][:10]
+
+        # Spectral divergence (compare eigenvalue distributions)
+        min_len = min(len(real_eigenvals), len(fake_eigenvals))
+        if min_len > 0:
+            spectral_divergence = np.mean(
+                np.abs(
+                    np.log(real_eigenvals[:min_len] + 1e-10)
+                    - np.log(fake_eigenvals[:min_len] + 1e-10)
+                )
+            )
+        else:
+            spectral_divergence = float("inf")
+
+        # Condition number ratio
+        real_condition = (
+            real_eigenvals[0] / (real_eigenvals[-1] + 1e-10)
+            if len(real_eigenvals) > 0
+            else 1.0
+        )
+        fake_condition = (
+            fake_eigenvals[0] / (fake_eigenvals[-1] + 1e-10)
+            if len(fake_eigenvals) > 0
+            else 1.0
+        )
+        condition_ratio = np.log(fake_condition / (real_condition + 1e-10))
+
+        return {
+            "spectral_divergence": spectral_divergence,
+            "condition_number_ratio": condition_ratio,
+        }
+
+    def _compute_diversity_metrics(self, fake_features):
+        """Compute diversity metrics for generated samples"""
+        fake_np = fake_features.numpy()
+
+        # Pairwise distances between generated samples
+        def pairwise_l2_distances(X):
+            diff = X[:, None, :] - X[None, :, :]
+            return np.sqrt((diff**2).sum(axis=2))
+
+        # Subsample for efficiency
+        if len(fake_np) > 500:
+            idx = np.random.choice(len(fake_np), 500, replace=False)
+            fake_subset = fake_np[idx]
+        else:
+            fake_subset = fake_np
+
+        distances = pairwise_l2_distances(fake_subset)
+
+        # Remove diagonal (self-distances)
+        mask = ~np.eye(distances.shape[0], dtype=bool)
+        distances_flat = distances[mask]
+
+        # Diversity metrics
+        mean_pairwise_distance = distances_flat.mean()
+        min_pairwise_distance = distances_flat.min()
+        std_pairwise_distance = distances_flat.std()
+
+        # Effective sample size (entropy of distance distribution)
+        hist, _ = np.histogram(distances_flat, bins=50, density=True)
+        hist = hist + 1e-10  # Avoid log(0)
+        hist = hist / hist.sum()
+        distance_entropy = entropy(hist, base=2)
+
+        return {
+            "mean_pairwise_distance": mean_pairwise_distance,
+            "min_pairwise_distance": min_pairwise_distance,
+            "std_pairwise_distance": std_pairwise_distance,
+            "distance_entropy": distance_entropy,
+        }
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Run evaluation at the end of train epoch"""
+        if trainer.current_epoch % self.eval_every_n_epochs != 0:
+            return
+
+        # Cache real data on first evaluation
+        self._cache_real_data(trainer)
+
+        # Generate samples
+        print(f"Generating {self.num_samples} samples for evaluation...")
+        generated_samples = self._generate_samples(pl_module)
+
+        # Extract features
+        generated_samples = generated_samples.to(self.device)
+        fake_features = self._extract_features(generated_samples).cpu()
+
+        metrics = {}
+
+        # Compute Wasserstein distance
+        if self.compute_wasserstein:
+            wd = self._compute_wasserstein_distance(
+                self.real_features_cache, fake_features
+            )
+            metrics["wasserstein_distance"] = wd
+
+        # Compute MMD
+        if self.compute_mmd:
+            mmd = self._compute_mmd(
+                self.real_features_cache, fake_features, self.mmd_kernel
+            )
+            metrics["mmd"] = mmd
+
+        # Compute Coverage and Precision
+        if self.compute_coverage_precision:
+            coverage, precision = self._compute_coverage_precision(
+                self.real_features_cache, fake_features, self.k_nearest
+            )
+            metrics["coverage"] = coverage
+            metrics["precision"] = precision
+
+        # Compute Jensen-Shannon Divergence
+        if self.compute_js_divergence:
+            js_div = self._compute_js_divergence(
+                self.real_features_cache, fake_features
+            )
+            metrics["js_divergence"] = js_div
+
+        # Compute Energy Distance
+        if self.compute_energy_distance:
+            energy_dist = self._compute_energy_distance(
+                self.real_features_cache, fake_features
+            )
+            metrics["energy_distance"] = energy_dist
+
+        # Compute Density Consistency
+        if self.compute_density_consistency:
+            density_metrics = self._compute_density_consistency(
+                self.real_features_cache, fake_features
+            )
+            metrics.update(density_metrics)
+
+        # Compute Mode Collapse Metrics
+        if self.compute_mode_collapse:
+            mode_metrics = self._compute_mode_collapse_metrics(fake_features)
+            metrics.update(mode_metrics)
+
+        # Compute Spectral Metrics
+        if self.compute_spectral_metrics:
+            spectral_metrics = self._compute_spectral_metrics(
+                self.real_features_cache, fake_features
+            )
+            metrics.update(spectral_metrics)
+
+        # Compute Diversity Metrics
+        if self.compute_diversity_metrics:
+            diversity_metrics = self._compute_diversity_metrics(fake_features)
+            metrics.update(diversity_metrics)
 
         # Log metrics
-        for metric_name, value in metrics.items():
-            pl_module.log(
-                f"{metric_name}", value, on_epoch=True, prog_bar=True, sync_dist=True
-            )
+        for name, value in metrics.items():
+            pl_module.log(f"eval/{name}", value)
 
         # Store in history
         self.metrics_history["epoch"].append(trainer.current_epoch)
         for metric_name, value in metrics.items():
             if metric_name in self.metrics_history:
                 self.metrics_history[metric_name].append(value)
-
-    def _compute_metrics(self, generated_samples, device):
-        """Compute all relevant metrics"""
-        metrics = {}
-
-        if self.dataset_type == "2d":
-            metrics.update(self._compute_2d_metrics(generated_samples))
-        else:
-            metrics.update(self._compute_image_metrics(generated_samples, device))
-
-        return metrics
-
-    def _compute_2d_metrics(self, generated_samples):
-        """Compute metrics for 2D datasets"""
-        gen_data = generated_samples.cpu().numpy()
-
-        metrics = {}
-
-        # 1. Wasserstein Distance (1D projections)
-        w_distances = []
-        for dim in range(2):
-            wd = wasserstein_distance(self.real_data_cpu[:, dim], gen_data[:, dim])
-            w_distances.append(wd)
-        metrics["wasserstein_dist"] = np.mean(w_distances)
-
-        # 2. Coverage and Precision
-        coverage, precision = self._compute_coverage_precision(
-            self.real_data_cpu, gen_data
-        )
-        metrics["coverage"] = coverage
-        metrics["precision"] = precision
-
-        # 3. MMD with RBF kernel
-        mmd_score = self._compute_mmd_rbf(self.real_data_cpu, gen_data)
-        metrics["mmd"] = mmd_score
-
-        return metrics
-
-    def _compute_image_metrics(self, generated_samples, device):
-        """Compute metrics for image datasets"""
-        metrics = {}
-
-        if self.use_lightweight_metrics:
-            # Use faster, lighter metrics
-            fd_score = self._compute_frechet_distance(generated_samples, device)
-            metrics["frechet_distance"] = fd_score
-
-            # Simple diversity metric
-            diversity_score = self._compute_diversity(generated_samples)
-            metrics["lpips_diversity"] = diversity_score
-        else:
-            # Use traditional but optimized metrics
-            is_score = self._compute_inception_score_fast(generated_samples, device)
-            metrics["inception_score"] = is_score
-
-            kid_score = self._compute_kid_fast(generated_samples, device)
-            metrics["kid_score"] = kid_score
-
-        return metrics
-
-    def _compute_frechet_distance(self, generated_samples, device):
-        """Compute Frechet Distance using lightweight features"""
-        self.feature_extractor = self.feature_extractor.to(device)
-
-        with torch.no_grad():
-            gen_features = []
-            for i in range(0, len(generated_samples), self.batch_size):
-                batch = generated_samples[i : i + self.batch_size]
-                feat = self.feature_extractor(batch)
-                gen_features.append(feat)
-
-            gen_features = torch.cat(gen_features, dim=0).to(device)
-
-        # Compute Frechet distance
-        real_features = self.real_features
-
-        # Compute means and covariances
-        mu_real, sigma_real = (
-            torch.mean(real_features, dim=0).to(device),
-            cov(real_features, rowvar=False).to(device),
-        )
-        mu_gen, sigma_gen = (
-            torch.mean(gen_features, dim=0).to(device),
-            cov(gen_features, rowvar=False).to(device),
-        )
-
-        # Compute Frechet distance
-        fd = frechet_distance(mu_real, sigma_real, mu_gen, sigma_gen)
-        return fd
-
-    def _compute_diversity(self, generated_samples):
-        """Compute a simple diversity metric based on pairwise distances"""
-        # Subsample for efficiency
-        n_samples = min(100, len(generated_samples))
-        indices = torch.randperm(len(generated_samples))[:n_samples]
-        samples = generated_samples[indices].flatten(1)  # Flatten spatial dims
-
-        # Compute pairwise L2 distances
-        pairwise_dists = torch.cdist(samples, samples, p=2.0)
-
-        # Return mean pairwise distance (higher = more diverse)
-        mask = torch.triu(torch.ones_like(pairwise_dists, dtype=torch.bool), diagonal=1)
-        return torch.mean(pairwise_dists[mask])
-
-    def _compute_inception_score_fast(self, images, device, splits=5):
-        """Faster Inception Score with reduced splits and batch processing"""
-        self.feature_extractor = self.feature_extractor.to(device)
-
-        with torch.no_grad():
-            # Process in larger batches
-            preds = []
-            for i in range(0, len(images), self.batch_size):
-                batch = images[i : i + self.batch_size]
-                if batch.size(-1) != 224:
-                    batch = F.interpolate(
-                        batch, size=(224, 224), mode="bilinear", align_corners=False
-                    )
-
-                # Normalize to [0, 1]
-                if batch.min() < 0:
-                    batch = (batch + 1) / 2
-
-                pred = F.softmax(self.feature_extractor(batch), dim=1)
-                preds.append(pred.cpu())
-
-            preds = torch.cat(preds, dim=0)
-
-        # Compute IS with fewer splits
-        scores = []
-        for i in range(splits):
-            part = preds[i * len(preds) // splits : (i + 1) * len(preds) // splits]
-
-            # Compute KL divergence
-            mean_part = torch.mean(part, dim=0, keepdim=True)
-            kl_div = part * (torch.log(part + 1e-10) - torch.log(mean_part + 1e-10))
-            kl_div = torch.mean(torch.sum(kl_div, dim=1))
-
-            scores.append(torch.exp(kl_div))
-
-        return torch.mean(torch.tensor(scores))
-
-    def _compute_kid_fast(self, generated_samples, device, subset_size=300):
-        """Faster KID with smaller subset"""
-        self.feature_extractor = self.feature_extractor.to(device)
-
-        with torch.no_grad():
-            gen_features = []
-            for i in range(0, len(generated_samples), self.batch_size):
-                batch = generated_samples[i : i + self.batch_size]
-                if batch.size(-1) != 224:
-                    batch = F.interpolate(
-                        batch, size=(224, 224), mode="bilinear", align_corners=False
-                    )
-
-                if batch.min() < 0:
-                    batch = (batch + 1) / 2
-
-                feat = self.feature_extractor(batch)
-                gen_features.append(feat.cpu())
-
-            gen_features = torch.cat(gen_features, dim=0)
-
-        # Use smaller subsets
-        n_samples = min(subset_size, len(self.real_features), len(gen_features))
-
-        real_indices = torch.randperm(len(self.real_features))[:n_samples]
-        gen_indices = torch.randperm(len(gen_features))[:n_samples]
-
-        real_subset = self.real_features[real_indices]
-        gen_subset = gen_features[gen_indices]
-
-        # Compute polynomial kernel MMD
-        kid_score = self._polynomial_mmd(real_subset.numpy(), gen_subset.numpy())
-        return kid_score
-
-    def _compute_coverage_precision(self, real_data, gen_data, k=5):
-        """Compute coverage and precision metrics."""
-        # Use subsets for efficiency
-        max_points = 500
-        if len(real_data) > max_points:
-            real_indices = np.random.choice(len(real_data), max_points, replace=False)
-            real_data = real_data[real_indices]
-        if len(gen_data) > max_points:
-            gen_indices = np.random.choice(len(gen_data), max_points, replace=False)
-            gen_data = gen_data[gen_indices]
-
-        # Fit nearest neighbors
-        nbrs_real = NearestNeighbors(n_neighbors=min(k, len(real_data))).fit(real_data)
-        nbrs_gen = NearestNeighbors(n_neighbors=min(k, len(gen_data))).fit(gen_data)
-
-        # Coverage
-        distances_real_to_gen, _ = nbrs_gen.kneighbors(real_data)
-        threshold_real = np.percentile(distances_real_to_gen[:, 0], 95)
-        coverage = np.mean(distances_real_to_gen[:, 0] < threshold_real)
-
-        # Precision
-        distances_gen_to_real, _ = nbrs_real.kneighbors(gen_data)
-        threshold_gen = np.percentile(distances_gen_to_real[:, 0], 95)
-        precision = np.mean(distances_gen_to_real[:, 0] < threshold_gen)
-
-        return coverage, precision
-
-    def _compute_mmd_rbf(self, X, Y, gamma=1.0):
-        """Compute Maximum Mean Discrepancy with RBF kernel"""
-        # Use smaller subsets
-        n_samples = min(300, len(X), len(Y))
-        X_sub = X[np.random.choice(len(X), n_samples, replace=False)]
-        Y_sub = Y[np.random.choice(len(Y), n_samples, replace=False)]
-
-        # Compute pairwise distances
-        XX = cdist(X_sub, X_sub, metric="euclidean")
-        YY = cdist(Y_sub, Y_sub, metric="euclidean")
-        XY = cdist(X_sub, Y_sub, metric="euclidean")
-
-        # RBF kernel
-        K_XX = np.exp(-gamma * XX**2)
-        K_YY = np.exp(-gamma * YY**2)
-        K_XY = np.exp(-gamma * XY**2)
-
-        mmd_sq = K_XX.mean() + K_YY.mean() - 2 * K_XY.mean()
-        return np.sqrt(max(mmd_sq, 0))
-
-    def _polynomial_mmd(self, X, Y, degree=3, gamma=None, coef0=1):
-        """Compute MMD with polynomial kernel"""
-        if gamma is None:
-            gamma = 1.0 / X.shape[1]
-
-        K_XX = (gamma * np.dot(X, X.T) + coef0) ** degree
-        K_YY = (gamma * np.dot(Y, Y.T) + coef0) ** degree
-        K_XY = (gamma * np.dot(X, Y.T) + coef0) ** degree
-
-        np.fill_diagonal(K_XX, 0)
-        np.fill_diagonal(K_YY, 0)
-
-        n, m = X.shape[0], Y.shape[0]
-        mmd_sq = (
-            K_XX.sum() / (n * (n - 1))
-            + K_YY.sum() / (m * (m - 1))
-            - 2 * K_XY.sum() / (n * m)
-        )
-
-        return np.sqrt(max(mmd_sq, 0))
 
     def get_metrics_history(self):
         """Return the complete metrics history"""
@@ -571,35 +658,96 @@ class FastEvaluationCallback(Callback):
 class MetricTracker(Callback):
     def __init__(self):
         self.train_losses = []
-        self.fid_scores = []
 
     def on_train_epoch_end(self, trainer, pl_module):
         loss = trainer.callback_metrics.get("train_loss")
-        fid = trainer.callback_metrics.get("fid")
         if loss is not None:
             self.train_losses.append(loss.item())
-        if fid is not None:
-            self.fid_scores.append(fid.item())
 
 
-def create_evaluation_callback(cfg, data, model_type):
-    """Create the appropriate evaluation callback based on dataset type"""
+def create_evaluation_callback(
+    cfg, model_type="diffusion", evaluation_level="standard"
+):
+    """Create appropriate evaluation callback"""
 
     if cfg.main.dataset.lower() in ["two_moons", "2d_gaussians"]:
-        return FastEvaluationCallback(
-            real_data=data[:1100],
-            model_type=model_type,
-            dataset_type="2d",
-            eval_samples=1000,
-            eval_frequency=5,  # Evaluate every 5 epochs
-            k_nearest=5,
-        )
+        data_type = "2d"
     else:
+        data_type = "image"
+
+    if evaluation_level == "minimal":
+        # Fastest evaluation - core metrics only
         return FastEvaluationCallback(
-            real_data=data[:600],
             model_type=model_type,
-            dataset_type="image",
-            eval_samples=500,  # Fewer samples for images to keep it fast
-            eval_frequency=10,
-            k_nearest=5,
+            dataset_type=data_type,
+            eval_every_n_epochs=5,
+            num_samples=500,
+            feature_extractor="mobilenet" if data_type == "image" else None,
+            cache_dir="./weights",
+            compute_coverage_precision=True,
+            compute_mmd=True,
+            compute_wasserstein=False,  # Skip for speed
+            compute_js_divergence=False,
+            compute_energy_distance=False,
+            compute_density_consistency=False,
+            compute_mode_collapse=True,  # Important for generative models
+            compute_spectral_metrics=False,
+            compute_diversity_metrics=False,
         )
+
+    elif evaluation_level == "comprehensive":
+        # Full evaluation suite
+        return FastEvaluationCallback(
+            model_type=model_type,
+            dataset_type=data_type,
+            eval_every_n_epochs=10,
+            num_samples=2000,
+            feature_extractor="mobilenet" if data_type == "image" else None,
+            cache_dir="./weights",
+            compute_coverage_precision=True,
+            compute_mmd=True,
+            compute_wasserstein=True,
+            compute_js_divergence=True,
+            compute_energy_distance=True,
+            compute_density_consistency=True,
+            compute_mode_collapse=True,
+            compute_spectral_metrics=True,
+            compute_diversity_metrics=True,
+        )
+
+    else:  # 'standard'
+        if data_type == "image":
+            return FastEvaluationCallback(
+                model_type=model_type,
+                dataset_type=data_type,
+                eval_every_n_epochs=10,  # Less frequent for images
+                num_samples=1000,  # Moderate sample size
+                feature_extractor="mobilenet",
+                cache_dir="./weights",
+                compute_coverage_precision=True,
+                compute_mmd=True,
+                compute_wasserstein=True,
+                compute_js_divergence=True,
+                compute_energy_distance=False,  # Skip for images (expensive)
+                compute_density_consistency=True,
+                compute_mode_collapse=True,
+                compute_spectral_metrics=True,
+                compute_diversity_metrics=True,
+            )
+        else:  # 2D or low-dimensional data
+            return FastEvaluationCallback(
+                model_type=model_type,
+                dataset_type=data_type,
+                eval_every_n_epochs=5,
+                num_samples=2000,  # More samples for better statistics
+                feature_extractor=None,  # No feature extraction needed
+                compute_coverage_precision=True,
+                compute_mmd=True,
+                compute_wasserstein=True,
+                compute_js_divergence=True,
+                compute_energy_distance=True,
+                compute_density_consistency=True,
+                compute_mode_collapse=True,
+                compute_spectral_metrics=True,
+                compute_diversity_metrics=True,
+            )

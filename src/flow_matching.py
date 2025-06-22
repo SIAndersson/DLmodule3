@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 import hydra
+import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
@@ -14,10 +15,11 @@ from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
 from utils.visualisation import (
+    create_metrics_summary_table,
+    plot_evaluation_metrics,
     plot_loss_function,
     save_2d_samples,
     save_image_samples,
-    visualize_evaluation_results,
 )
 
 # Configure matplotlib for better aesthetics
@@ -317,7 +319,9 @@ def main(cfg: DictConfig):
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
     tracker = MetricTracker()
-    eval_callback = create_evaluation_callback(cfg, X_train, "vector_field")
+    eval_callback = create_evaluation_callback(
+        cfg, model_type="vector_field", evaluation_level="standard"
+    )
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         callbacks=[tracker, eval_callback],
@@ -330,8 +334,6 @@ def main(cfg: DictConfig):
 
     # Generate samples
     log.info("Generating samples...")
-
-    # TODO: Set up visualisation for image data
     if (
         cfg.main.dataset.lower() == "two_moons"
         or cfg.main.dataset.lower() == "2d_gaussians"
@@ -349,7 +351,15 @@ def main(cfg: DictConfig):
         save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
         plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
 
-    visualize_evaluation_results(eval_callback, model_name="vector_field")
+    fig = plot_evaluation_metrics(
+        eval_callback,
+        save_path=f"flow_matching_{cfg.main.dataset}_metrics.png",
+    )
+    plt.close()
+
+    # Get summary table
+    summary_df = create_metrics_summary_table(eval_callback)
+    print(summary_df)
 
 
 if __name__ == "__main__":
