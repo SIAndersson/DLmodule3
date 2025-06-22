@@ -33,7 +33,7 @@ def load_huggingface_data(
     filename = dataset_base
     if test:
         filename += "_test"
-    save_path = Path(__file__).parent.parent / "data" / f"{filename}.pt"
+    save_path = Path(__file__).parent.parent.parent / "data" / f"{filename}.pt"
 
     # Check if dataset file exists
     if save_path.exists():
