@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 import hydra
 import matplotlib.pyplot as plt
@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import AdamW
 
-from utils.callbacks import MetricTracker, create_evaluation_callback
+from utils.callbacks import EvaluationMixin, MetricTracker, create_evaluation_config
 from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
@@ -35,7 +35,7 @@ if torch.cuda.is_available():
         print("Tensor cores enabled globally")
 
 
-class FlowMatching(pl.LightningModule):
+class FlowMatching(pl.LightningModule, EvaluationMixin):
     """
     Flow Matching implementation following Lipman et al. (2023).
 
@@ -54,6 +54,7 @@ class FlowMatching(pl.LightningModule):
     def __init__(
         self,
         model_cfg: DictConfig,
+        evaluator_config: Dict,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -66,6 +67,25 @@ class FlowMatching(pl.LightningModule):
         self.num_layers = model_cfg.num_layers
         self.time_embed_dim = model_cfg.time_embed_dim
         self.weight_decay = model_cfg.weight_decay
+        # Store metrics history
+        self.metrics_history = {
+            "epoch": [],
+            "wasserstein_distance": [],
+            "mmd": [],
+            "coverage": [],
+            "precision": [],
+            "js_divergence": [],
+            "energy_distance": [],
+            "density_ks_stat": [],
+            "log_density_ratio": [],
+            "mode_collapse_score": [],
+            "duplicate_ratio": [],
+            "mean_pairwise_distance": [],
+            "min_pairwise_distance": [],
+            "std_pairwise_distance": [],
+            "distance_entropy": [],
+        }
+        self.val_metrics = []
 
         # Vector field network v_θ(x, t)
         if model_cfg.model_type.upper() == "MLP":
@@ -88,6 +108,8 @@ class FlowMatching(pl.LightningModule):
             self.dim = (3, 256, 256)
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
+
+        self.setup_evaluation(evaluator_config)
 
     def conditional_vector_field(
         self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
@@ -266,16 +288,34 @@ class FlowMatching(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        """Validation step - compute flow matching loss."""
-        x_1 = batch[0] if isinstance(batch, (list, tuple)) else batch
-        loss = self.flow_matching_loss(x_1)
+        """Validation step - compute evaluation metrics."""
+        val_metrics = self.run_evaluation()
+        for k, v in val_metrics.items():
+            self.log(f"eval/{k}", v, sync_dist=True, on_epoch=True)
+        self.val_metrics.append(val_metrics)
 
-        self.log("val_loss", loss, prog_bar=True)
-        return loss
+    def on_validation_epoch_end(self):
+        if self.val_metrics and any(len(d) > 0 for d in self.val_metrics):
+            self.metrics_history["epoch"].append(self.current_epoch)
+            # Get all keys from the first dict (since all dicts have the same keys)
+            keys = self.val_metrics[0].keys()
+            for key in keys:
+                # Collect all values for this key across all dicts
+                values = [d[key] for d in self.val_metrics]
+                # Compute the mean
+                mean_value = torch.mean(
+                    torch.tensor(values, dtype=torch.float32)
+                ).item()
+                # Append the mean to the history
+                self.metrics_history[key].append(mean_value)
+        self.val_metrics.clear()
 
     def configure_optimizers(self):
         """Configure Adam optimizer."""
         return AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+
+    def get_metrics_history(self):
+        return self.metrics_history
 
     def fast_sample(
         self,
@@ -307,7 +347,10 @@ def main(cfg: DictConfig):
 
     log.info("Initializing Flow Matching model...")
     # Initialize model
-    model = FlowMatching(cfg.model)
+    eval_config = create_evaluation_config(
+        log, cfg, model_type="vector_field", evaluation_level="standard"
+    )
+    model = FlowMatching(cfg.model, eval_config)
 
     # Create sample data
     log.info("Setting up dataset...")
@@ -316,21 +359,37 @@ def main(cfg: DictConfig):
     datamodule.setup(stage="fit")
     X_train = datamodule.get_original_data()
 
+    # Find appropriate values
+    if torch.cuda.is_available():
+        accelerator = "gpu"
+        devices = torch.cuda.device_count()
+        strategy = "auto"
+    elif torch.backends.mps.is_available():
+        accelerator = "mps"
+        devices = 1
+        strategy = "auto"
+    else:
+        accelerator = "cpu"
+        devices = "auto"
+        strategy = "auto"
+
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
     tracker = MetricTracker()
-    eval_callback = create_evaluation_callback(
-        log, cfg, model_type="vector_field", evaluation_level="standard"
-    )
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
-        callbacks=[tracker, eval_callback],
-        accelerator="auto",
+        accelerator=accelerator,
+        devices=devices,
+        strategy=strategy,
+        callbacks=[tracker],
+        enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
     )
     trainer.fit(model, datamodule)
     log.info("Training complete.")
+
+    log.info(f"Train losses: {tracker.train_losses}")
 
     # Generate samples
     log.info("Generating samples...")
@@ -351,14 +410,16 @@ def main(cfg: DictConfig):
         save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
         plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
 
+    metrics_history = model.get_metrics_history()
     fig = plot_evaluation_metrics(
-        eval_callback,
+        metrics_history,
+        "vector_field",
         save_path=f"flow_matching_{cfg.main.dataset}_metrics.png",
     )
     plt.close()
 
     # Get summary table
-    summary_df = create_metrics_summary_table(eval_callback)
+    summary_df = create_metrics_summary_table(metrics_history)
     print(summary_df)
 
 

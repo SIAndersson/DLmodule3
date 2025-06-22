@@ -225,7 +225,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         self.val_metrics.append(val_metrics)
 
     def on_validation_epoch_end(self):
-        if self.val_metrics and len(self.val_metrics) > 0:
+        if self.val_metrics and any(len(d) > 0 for d in self.val_metrics):
             self.metrics_history["epoch"].append(self.current_epoch)
             # Get all keys from the first dict (since all dicts have the same keys)
             keys = self.val_metrics[0].keys()
@@ -425,7 +425,6 @@ def main(cfg: DictConfig):
     if torch.cuda.is_available():
         accelerator = "gpu"
         devices = torch.cuda.device_count()
-        devices = 1
         strategy = "auto"
     elif torch.backends.mps.is_available():
         accelerator = "mps"
@@ -451,6 +450,8 @@ def main(cfg: DictConfig):
     )
     trainer.fit(model, datamodule)
     log.info("Training complete.")
+
+    log.info(f"Train losses: {tracker.train_losses}")
 
     # Generate samples
     log.info("Generating samples...")
@@ -482,6 +483,7 @@ def main(cfg: DictConfig):
     metrics_history = model.get_metrics_history()
     fig = plot_evaluation_metrics(
         metrics_history,
+        "diffusion",
         save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.png",
     )
     plt.close()

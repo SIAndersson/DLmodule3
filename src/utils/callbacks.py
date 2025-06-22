@@ -139,7 +139,7 @@ class GenerativeModelEvaluator:
         if self.real_features_cache is not None:
             return
 
-        self.logger.info("Caching real data features...")
+        self.logger.debug("Caching real data features...")
         real_samples = []
 
         # Sample from training data
@@ -163,7 +163,7 @@ class GenerativeModelEvaluator:
         # Extract features
         real_samples = real_samples.to(device)
         self.real_features_cache = self._extract_features(real_samples).cpu()
-        self.logger.info(f"Cached {len(self.real_features_cache)} real samples")
+        self.logger.debug(f"Cached {len(self.real_features_cache)} real samples")
 
     def generate_samples(self, model, device):
         """Generate samples from the model"""
@@ -442,7 +442,7 @@ class GenerativeModelEvaluator:
 
         metrics = {}
 
-        self.logger.info("Computing metrics...")
+        self.logger.debug("Computing metrics...")
 
         # Compute Wasserstein distance
         if self.compute_wasserstein:
@@ -450,7 +450,7 @@ class GenerativeModelEvaluator:
                 self.real_features_cache, fake_features
             )
             metrics["wasserstein_distance"] = wd
-            self.logger.info("Computed Wasserstein distance.")
+            self.logger.debug("Computed Wasserstein distance.")
 
         # Compute MMD
         if self.compute_mmd:
@@ -458,7 +458,7 @@ class GenerativeModelEvaluator:
                 self.real_features_cache, fake_features, self.mmd_kernel
             )
             metrics["mmd"] = mmd
-            self.logger.info("Computed MMD.")
+            self.logger.debug("Computed MMD.")
 
         # Compute Coverage and Precision
         if self.compute_coverage_precision:
@@ -467,7 +467,7 @@ class GenerativeModelEvaluator:
             )
             metrics["coverage"] = coverage
             metrics["precision"] = precision
-            self.logger.info("Computed coverage and precision.")
+            self.logger.debug("Computed coverage and precision.")
 
         # Compute Jensen-Shannon Divergence
         if self.compute_js_divergence:
@@ -475,7 +475,7 @@ class GenerativeModelEvaluator:
                 self.real_features_cache, fake_features
             )
             metrics["js_divergence"] = js_div
-            self.logger.info("Computed JS divergence.")
+            self.logger.debug("Computed JS divergence.")
 
         # Compute Energy Distance
         if self.compute_energy_distance:
@@ -483,7 +483,7 @@ class GenerativeModelEvaluator:
                 self.real_features_cache, fake_features, device
             )
             metrics["energy_distance"] = energy_dist
-            self.logger.info("Computed energy distance.")
+            self.logger.debug("Computed energy distance.")
 
         # Compute Density Consistency
         if self.compute_density_consistency:
@@ -491,19 +491,19 @@ class GenerativeModelEvaluator:
                 self.real_features_cache, fake_features
             )
             metrics.update(density_metrics)
-            self.logger.info("Computed density consistency.")
+            self.logger.debug("Computed density consistency.")
 
         # Compute Mode Collapse Metrics
         if self.compute_mode_collapse:
             mode_metrics = self._compute_mode_collapse_metrics(fake_features)
             metrics.update(mode_metrics)
-            self.logger.info("Computed mode collapse metrics.")
+            self.logger.debug("Computed mode collapse metrics.")
 
         # Compute Diversity Metrics
         if self.compute_diversity_metrics:
             diversity_metrics = self._compute_diversity_metrics(fake_features, device)
             metrics.update(diversity_metrics)
-            self.logger.info("Computed diversity metrics.")
+            self.logger.debug("Computed diversity metrics.")
 
         return metrics
 
