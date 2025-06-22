@@ -203,6 +203,9 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         loss = F.mse_loss(noise, predicted_noise)
         return loss
 
+    def on_train_start(self):
+        log.info(f"[GPU {self.trainer.local_rank}] Using device: {self.device}")
+
     def training_step(self, batch, batch_idx):
         """Training step: sample timestep and compute denoising loss"""
         x = (

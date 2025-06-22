@@ -9,7 +9,6 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 from dotenv import load_dotenv
 from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.utilities import rank_zero_only
 from scipy.stats import entropy, kstest, wasserstein_distance
 
 load_dotenv()
@@ -512,11 +511,7 @@ class MetricTracker(Callback):
     def __init__(self):
         self.train_losses = []
 
-    @rank_zero_only
     def on_train_epoch_end(self, trainer, pl_module):
-        if not trainer.is_global_zero:
-            return
-
         loss = trainer.callback_metrics.get("train_loss")
         if loss is not None:
             self.train_losses.append(loss.item())

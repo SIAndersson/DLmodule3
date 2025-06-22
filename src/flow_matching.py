@@ -111,6 +111,9 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
 
         self.setup_evaluation(evaluator_config)
 
+    def setup(self, stage=None):
+        self.setup_evaluator(stage)
+
     def conditional_vector_field(
         self, x_t: torch.Tensor, x_1: torch.Tensor, x_0: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
@@ -279,6 +282,9 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
 
         return x
 
+    def on_train_start(self):
+        log.info(f"[GPU {self.trainer.local_rank}] Using device: {self.device}")
+
     def training_step(self, batch, batch_idx):
         """Training step - compute flow matching loss."""
         x_1 = batch[0] if isinstance(batch, (list, tuple)) else batch
@@ -327,8 +333,8 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
         original_steps = self.num_steps
         original_solver = self.ode_solver
 
-        self.num_steps = solver
-        self.ode_solver = eval_steps
+        self.num_steps = eval_steps
+        self.ode_solver = solver
 
         samples = self.sample(num_samples, device=device)
 
