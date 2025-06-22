@@ -3,11 +3,13 @@ import os
 import random
 from pathlib import Path
 
+import pytorch_lightning as pl
 import torch
 from datasets import load_dataset
 from dotenv import load_dotenv
 from omegaconf import DictConfig
 from sklearn.datasets import make_moons
+from torch.utils.data import DataLoader, TensorDataset
 from torchvision import transforms
 
 load_dotenv()
@@ -137,3 +139,51 @@ def create_dataset(cfg: DictConfig, log: logging.Logger):
         return load_huggingface_data(dataset_name, log, cfg.main.test)
     else:
         raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
+
+
+class GenerativeDataModule(pl.LightningDataModule):
+    def __init__(self, cfg, logger):
+        super().__init__()
+        self.cfg = cfg
+        self.logger = logger
+        self.data_tensor = None
+
+    # If dataset requires downloading, do this on ONE core so that it is ready
+    def prepare_data(self):
+        if (
+            self.cfg.main.dataset.lower() != "two_moons"
+            and self.cfg.main.dataset.lower() != "2d_gaussians"
+        ):
+            dataset_name = "bitmind/ffhq-256"
+            self.logger.info(f"Preparing data for {dataset_name}.")
+            dataset_base = dataset_name.split("/")[-1]
+            filename = dataset_base
+            if self.cfg.main.test:
+                filename += "_test"
+            save_path = Path(__file__).parent.parent.parent / "data" / f"{filename}.pt"
+
+            # Check if dataset file exists
+            if not save_path.exists():
+                _ = create_dataset(self.cfg, self.logger)
+
+    # Setup only runs once per GPU
+    def setup(self, stage=None):
+        if self.data_tensor is None:
+            self.data_tensor = create_dataset(self.cfg, self.logger)
+
+        # Create dataset
+        self.dataset = TensorDataset(self.data_tensor)
+
+    # Lightning automatically sorts distributed sampler etc
+    def train_dataloader(self):
+        return DataLoader(
+            self.dataset,
+            batch_size=self.cfg.main.batch_size,
+            shuffle=True,
+            num_workers=0,
+            pin_memory=True,
+        )
+
+    def get_original_data(self):
+        """Access the original data for comparison"""
+        return self.data_tensor

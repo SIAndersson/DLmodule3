@@ -4,6 +4,7 @@
 
 - [Diffusion and flow matching equivalent](https://diffusionflow.github.io/)
 - [DDIM sampler implementation](https://nn.labml.ai/diffusion/stable_diffusion/sampler/ddim.html)
+- [DDIM paper](https://arxiv.org/pdf/2010.02502)
 - [Adding noise to data for diffusion performance image gen](https://arxiv.org/pdf/2301.11706v3)
 - [Diffusion model introduction](https://lilianweng.github.io/posts/2021-07-11-diffusion-models/)
 

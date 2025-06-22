@@ -7,19 +7,19 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import AdamW
-from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
-from utils.dataset import create_dataset
+from utils.callbacks import MetricTracker, create_evaluation_callback
+from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
 from utils.visualisation import (
+    plot_loss_function,
     save_2d_samples,
     save_image_samples,
     visualize_diffusion_process,
-    plot_loss_function,
     visualize_evaluation_results,
 )
-from utils.callbacks import MetricTracker, create_evaluation_callback
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
@@ -255,6 +255,155 @@ class DiffusionModel(pl.LightningModule):
 
         return x
 
+    @torch.no_grad()
+    def ddim_step(self, x_t, t, prev_t, eta=0.0):
+        """
+        Single DDIM step (inspired by https://nn.labml.ai/diffusion/stable_diffusion/sampler/ddim.html, but simplified and torchified)
+
+        """
+        batch_size = x_t.shape[0]
+        t_batch = torch.full((batch_size,), t, device=x_t.device, dtype=torch.long)
+        prev_t_batch = torch.full(
+            (batch_size,), prev_t, device=x_t.device, dtype=torch.long
+        )
+
+        # Handle dimensions for broadcasting
+        if x_t.dim() == 2:
+            reshape_dims = (-1, 1)
+        elif x_t.dim() == 4:
+            reshape_dims = (-1, 1, 1, 1)
+        else:
+            reshape_dims = (-1,) + (1,) * (x_t.dim() - 1)
+
+        # Get alpha values
+        alpha_t = self.alphas_cumprod[t_batch].reshape(*reshape_dims)
+        alpha_prev = (
+            self.alphas_cumprod[prev_t_batch].reshape(*reshape_dims)
+            if prev_t > 0
+            else torch.ones_like(alpha_t)
+        )
+
+        # Predict noise
+        predicted_noise = self.model(x_t, t_batch)
+
+        # Predict x_0
+        pred_x0 = (x_t - torch.sqrt(1 - alpha_t) * predicted_noise) / torch.sqrt(
+            alpha_t
+        )
+
+        # Compute direction to x_t
+        dir_xt = (
+            torch.sqrt(1 - alpha_prev - eta**2 * (1 - alpha_t / alpha_prev))
+            * predicted_noise
+        )
+
+        # Compute x_{t-1}
+        x_prev = torch.sqrt(alpha_prev) * pred_x0 + dir_xt
+
+        # Add stochastic noise if eta > 0
+        if eta > 0 and prev_t > 0:
+            noise = torch.randn_like(x_t)
+            sigma = (
+                eta
+                * torch.sqrt((1 - alpha_prev) / (1 - alpha_t))
+                * torch.sqrt(1 - alpha_t / alpha_prev)
+            )
+            x_prev += sigma.reshape(*reshape_dims) * noise
+
+        return x_prev
+
+    @torch.no_grad()
+    def ddim_sample(
+        self, shape, device, num_inference_steps: int = 50, eta: float = 0.0
+    ):
+        """
+        DDIM sampling (https://arxiv.org/pdf/2010.02502)
+
+        Args:
+            shape: Shape of samples to generate
+            device: Device to generate on
+            num_inference_steps: Number of denoising steps (much less than num_timesteps)
+            eta: DDIM parameter (0.0 = deterministic, DDIM, 1.0 = stochastic, DDPM-like)
+        """
+        # Create subset of timesteps
+        timesteps = torch.linspace(
+            self.num_timesteps - 1, 0, num_inference_steps, dtype=torch.long
+        )
+        timesteps = timesteps.to(device)
+
+        # Start from pure noise
+        x = torch.randn(shape, device=device)
+
+        # Reverse diffusion with skipped timesteps
+        for i, t in enumerate(timesteps):
+            # Get next timestep (or 0 if we're at the end)
+            prev_t = (
+                timesteps[i + 1]
+                if i + 1 < len(timesteps)
+                else torch.tensor(0, device=device)
+            )
+
+            x = self.ddim_step(x, t, prev_t, eta)
+
+        return x
+
+    def benchmark_sampling_speed(self, num_samples: int = 1000, device="cuda:0"):
+        """
+        Benchmark different sampling configurations to find optimal settings.
+        """
+        import time
+
+        configs = [
+            {"steps": 1000, "solver": "DDPM", "name": "Regular DDPM"},
+            {"steps": 100, "solver": "DDIM", "name": "Slow DDIM"},
+            {"steps": 50, "solver": "DDIM", "name": "Medium DDIM"},
+            {"steps": 20, "solver": "DDIM", "name": "Fast DDIM"},
+        ]
+
+        results = []
+
+        for config in tqdm(configs, desc="Iterating over configs..."):
+            # Warmup
+            _ = self.sample(10)
+            torch.cuda.synchronize()
+
+            # Benchmark
+            if "DDIM" in config["name"]:
+                print("Running DDIM.")
+                start_time = time.time()
+                samples = self.ddim_sample(
+                    (num_samples, 3, 256, 256),
+                    device,
+                    num_inference_steps=config["steps"],
+                )
+                torch.cuda.synchronize()
+                end_time = time.time()
+            else:
+                print("Running DDPM (standard)")
+                start_time = time.time()
+                samples = self.sample((num_samples, 3, 256, 256), device)
+                torch.cuda.synchronize()
+                end_time = time.time()
+
+            elapsed = end_time - start_time
+            samples_per_sec = num_samples / elapsed
+
+            results.append(
+                {
+                    "config": config["name"],
+                    "time": elapsed,
+                    "samples_per_sec": samples_per_sec,
+                    "steps": config["steps"],
+                    "solver": config["solver"],
+                }
+            )
+
+            print(
+                f"{config['name']}: {elapsed:.2f}s ({samples_per_sec:.1f} samples/sec)"
+            )
+
+        return results
+
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
@@ -265,12 +414,10 @@ def main(cfg: DictConfig):
     set_seed(cfg.main.seed)
 
     # Create dataset
-    data = create_dataset(cfg, log)
-
-    dataset = TensorDataset(data)
-    dataloader = DataLoader(
-        dataset, batch_size=cfg.main.batch_size, shuffle=True, num_workers=0
-    )
+    datamodule = GenerativeDataModule(cfg, log)
+    datamodule.prepare_data()
+    datamodule.setup(stage="fit")
+    data = datamodule.get_original_data()
 
     # Initialize model
     log.info("Initializing diffusion model...")
@@ -288,8 +435,13 @@ def main(cfg: DictConfig):
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
     )
-    trainer.fit(model, dataloader)
+    trainer.fit(model, datamodule)
     log.info("Training complete.")
+
+    device = next(model.parameters()).device
+    results = model.benchmark_sampling_speed(num_samples=1000, device=device)
+    print(results)
+    exit()
 
     # Generate samples
     log.info("Generating samples...")
@@ -311,7 +463,8 @@ def main(cfg: DictConfig):
 
         visualize_diffusion_process(model, generated_samples)
     else:
-        final_samples = model.sample((16, 3, 256, 256), device)
+        # Use DDIM sampler for large dataset so it doesn't take a million years
+        final_samples = model.ddim_sample((16, 3, 256, 256), device)
 
         # Save generated samples
         save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())

@@ -8,18 +8,17 @@ import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import AdamW
-from torch.utils.data import DataLoader, TensorDataset
 
-from utils.dataset import create_dataset
+from utils.callbacks import MetricTracker, create_evaluation_callback
+from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
 from utils.visualisation import (
+    plot_loss_function,
     save_2d_samples,
     save_image_samples,
-    plot_loss_function,
     visualize_evaluation_results,
 )
-from utils.callbacks import MetricTracker, create_evaluation_callback
 
 # Configure matplotlib for better aesthetics
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -276,6 +275,27 @@ class FlowMatching(pl.LightningModule):
         """Configure Adam optimizer."""
         return AdamW(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
+    def fast_sample(
+        self,
+        num_samples: int,
+        device: Optional[torch.device] = None,
+        solver: str = "euler",
+        eval_steps: int = 10,
+    ) -> torch.Tensor:
+        original_steps = self.num_steps
+        original_solver = self.ode_solver
+
+        self.num_steps = solver
+        self.ode_solver = eval_steps
+
+        samples = self.sample(num_samples, device=device)
+
+        # Restore original settings
+        self.num_steps = original_steps
+        self.ode_solver = original_solver
+
+        return samples
+
 
 # Example usage and testing
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -289,13 +309,10 @@ def main(cfg: DictConfig):
 
     # Create sample data
     log.info("Setting up dataset...")
-    X_train = create_dataset(cfg, log)
-
-    # Define a simple PyTorch Lightning DataLoader
-    dataset = TensorDataset(X_train)
-    dataloader = DataLoader(
-        dataset, batch_size=cfg.main.batch_size, shuffle=True, num_workers=0
-    )
+    datamodule = GenerativeDataModule(cfg, log)
+    datamodule.prepare_data()
+    datamodule.setup(stage="fit")
+    X_train = datamodule.get_original_data()
 
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
@@ -308,7 +325,7 @@ def main(cfg: DictConfig):
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
     )
-    trainer.fit(model, dataloader)
+    trainer.fit(model, datamodule)
     log.info("Training complete.")
 
     # Generate samples

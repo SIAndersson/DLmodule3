@@ -1,31 +1,36 @@
+import os
+from pathlib import Path
+
+import numpy as np
 import torch
+import torch.nn.functional as F
+from dotenv import load_dotenv
+from pytorch_lightning.callbacks import Callback
+from scipy.spatial.distance import cdist
+from scipy.stats import wasserstein_distance
+from sklearn.neighbors import NearestNeighbors
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision.utils import save_image
-from pathlib import Path
-from pytorch_lightning.callbacks import Callback
-from dotenv import load_dotenv
-import os
-import numpy as np
-from scipy.stats import wasserstein_distance
-from scipy.spatial.distance import cdist
-import torch.nn.functional as F
-from sklearn.neighbors import NearestNeighbors
 
 load_dotenv()
 
 DATASET_CACHE = os.getenv("HF_DATASETS_CACHE", None)
 
+
 # Taken from Reddit to avoid scipy sqrtm https://www.reddit.com/r/MachineLearning/comments/12hv2u6/d_a_better_way_to_compute_the_fr%C3%A9chet_inception/
-def frechet_distance(mu_x: torch.Tensor, sigma_x: torch.Tensor, mu_y: torch.Tensor, sigma_y: torch.Tensor):
+def frechet_distance(
+    mu_x: torch.Tensor, sigma_x: torch.Tensor, mu_y: torch.Tensor, sigma_y: torch.Tensor
+):
     a = (mu_x - mu_y).square().sum(dim=-1)
     b = sigma_x.trace() + sigma_y.trace()
     c = torch.linalg.eigvals(sigma_x @ sigma_y).sqrt().real.sum(dim=-1)
 
     return a + b - 2 * c
 
+
 # Taken from https://discuss.pytorch.org/t/covariance-and-gradient-support/16217/2
 def cov(m, rowvar=False):
-    '''Estimate a covariance matrix given data.
+    """Estimate a covariance matrix given data.
 
     Covariance indicates the level to which two variables vary together.
     If we examine N-dimensional samples, `X = [x_1, x_2, ... x_N]^T`,
@@ -43,9 +48,9 @@ def cov(m, rowvar=False):
 
     Returns:
         The covariance matrix of the variables.
-    '''
+    """
     if m.dim() > 2:
-        raise ValueError('m has more than 2 dimensions')
+        raise ValueError("m has more than 2 dimensions")
     if m.dim() < 2:
         m = m.view(1, -1)
     if not rowvar and m.size(0) != 1:
@@ -55,6 +60,7 @@ def cov(m, rowvar=False):
     m -= torch.mean(m, dim=1, keepdim=True)
     mt = m.t()  # if complex: mt = m.t().conj()
     return fact * m.matmul(mt).squeeze()
+
 
 # This is SO EXTREMELY SLOW
 class EvaluateSamplesCallback(Callback):
@@ -198,12 +204,15 @@ class FastEvaluationCallback(Callback):
 
         if self.dataset_type == "image":
             if self.use_lightweight_metrics:
-                self.metrics_history.update({"frechet_distance": [], "lpips_diversity": []})
+                self.metrics_history.update(
+                    {"frechet_distance": [], "lpips_diversity": []}
+                )
             else:
                 self.metrics_history.update({"inception_score": [], "kid_score": []})
 
     def _create_lightweight_extractor(self):
         """Create a lightweight CNN feature extractor"""
+
         class LightweightExtractor(torch.nn.Module):
             def __init__(self, feature_dim=512):
                 super().__init__()
@@ -235,6 +244,7 @@ class FastEvaluationCallback(Callback):
         """Create a more efficient version of Inception"""
         # Use MobileNetV2 instead of Inception - much faster
         from torchvision.models import mobilenet_v2
+
         model = mobilenet_v2(pretrained=True)
         # Remove classifier, keep features
         model.classifier = torch.nn.Identity()
@@ -256,7 +266,9 @@ class FastEvaluationCallback(Callback):
                 else:
                     # Only resize if using MobileNet (expects 224x224)
                     if batch.size(-1) != 224:
-                        batch = F.interpolate(batch, size=(224, 224), mode='bilinear', align_corners=False)
+                        batch = F.interpolate(
+                            batch, size=(224, 224), mode="bilinear", align_corners=False
+                        )
                     feat = self.feature_extractor(batch)
 
                 features.append(feat.cpu())
@@ -286,9 +298,9 @@ class FastEvaluationCallback(Callback):
                     raise ValueError(f"Unknown model type: {self.model_type}")
             else:  # image
                 if self.model_type == "vector_field":
-                    generated_samples = pl_module.sample(eval_samples, device)
+                    generated_samples = pl_module.fast_sample(eval_samples, device)
                 elif self.model_type == "diffusion":
-                    generated_samples = pl_module.sample(
+                    generated_samples = pl_module.ddim_sample(
                         (eval_samples, 3, 264, 264), device
                     )
                 else:
@@ -299,7 +311,9 @@ class FastEvaluationCallback(Callback):
 
         # Log metrics
         for metric_name, value in metrics.items():
-            pl_module.log(f"{metric_name}", value, on_epoch=True, prog_bar=True, sync_dist=True)
+            pl_module.log(
+                f"{metric_name}", value, on_epoch=True, prog_bar=True, sync_dist=True
+            )
 
         # Store in history
         self.metrics_history["epoch"].append(trainer.current_epoch)
@@ -383,8 +397,14 @@ class FastEvaluationCallback(Callback):
         real_features = self.real_features
 
         # Compute means and covariances
-        mu_real, sigma_real = torch.mean(real_features, dim=0).to(device), cov(real_features, rowvar=False).to(device)
-        mu_gen, sigma_gen = torch.mean(gen_features, dim=0).to(device), cov(gen_features, rowvar=False).to(device)
+        mu_real, sigma_real = (
+            torch.mean(real_features, dim=0).to(device),
+            cov(real_features, rowvar=False).to(device),
+        )
+        mu_gen, sigma_gen = (
+            torch.mean(gen_features, dim=0).to(device),
+            cov(gen_features, rowvar=False).to(device),
+        )
 
         # Compute Frechet distance
         fd = frechet_distance(mu_real, sigma_real, mu_gen, sigma_gen)
@@ -414,7 +434,9 @@ class FastEvaluationCallback(Callback):
             for i in range(0, len(images), self.batch_size):
                 batch = images[i : i + self.batch_size]
                 if batch.size(-1) != 224:
-                    batch = F.interpolate(batch, size=(224, 224), mode='bilinear', align_corners=False)
+                    batch = F.interpolate(
+                        batch, size=(224, 224), mode="bilinear", align_corners=False
+                    )
 
                 # Normalize to [0, 1]
                 if batch.min() < 0:
@@ -448,7 +470,9 @@ class FastEvaluationCallback(Callback):
             for i in range(0, len(generated_samples), self.batch_size):
                 batch = generated_samples[i : i + self.batch_size]
                 if batch.size(-1) != 224:
-                    batch = F.interpolate(batch, size=(224, 224), mode='bilinear', align_corners=False)
+                    batch = F.interpolate(
+                        batch, size=(224, 224), mode="bilinear", align_corners=False
+                    )
 
                 if batch.min() < 0:
                     batch = (batch + 1) / 2
