@@ -1,4 +1,4 @@
-batch_size: 512
+batch_size: 256
 grad_clip: 1.0
 max_epochs: 500
 seed: 10
