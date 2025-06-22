@@ -17,6 +17,51 @@ load_dotenv()
 DATASET_CACHE = os.getenv("HF_DATASETS_CACHE", None)
 
 
+# Taken from Reddit to avoid scipy sqrtm https://www.reddit.com/r/MachineLearning/comments/12hv2u6/d_a_better_way_to_compute_the_fr%C3%A9chet_inception/
+def frechet_distance(
+    mu_x: torch.Tensor, sigma_x: torch.Tensor, mu_y: torch.Tensor, sigma_y: torch.Tensor
+):
+    a = (mu_x - mu_y).square().sum(dim=-1)
+    b = sigma_x.trace() + sigma_y.trace()
+    c = torch.linalg.eigvals(sigma_x @ sigma_y).sqrt().real.sum(dim=-1)
+
+    return a + b - 2 * c
+
+
+# Taken from https://discuss.pytorch.org/t/covariance-and-gradient-support/16217/2
+def cov(m, rowvar=False):
+    """Estimate a covariance matrix given data.
+
+    Covariance indicates the level to which two variables vary together.
+    If we examine N-dimensional samples, `X = [x_1, x_2, ... x_N]^T`,
+    then the covariance matrix element `C_{ij}` is the covariance of
+    `x_i` and `x_j`. The element `C_{ii}` is the variance of `x_i`.
+
+    Args:
+        m: A 1-D or 2-D array containing multiple variables and observations.
+            Each row of `m` represents a variable, and each column a single
+            observation of all those variables.
+        rowvar: If `rowvar` is True, then each row represents a
+            variable, with observations in the columns. Otherwise, the
+            relationship is transposed: each column represents a variable,
+            while the rows contain observations.
+
+    Returns:
+        The covariance matrix of the variables.
+    """
+    if m.dim() > 2:
+        raise ValueError("m has more than 2 dimensions")
+    if m.dim() < 2:
+        m = m.view(1, -1)
+    if not rowvar and m.size(0) != 1:
+        m = m.t()
+    # m = m.type(torch.double)  # uncomment this line if desired
+    fact = 1.0 / (m.size(1) - 1)
+    m -= torch.mean(m, dim=1, keepdim=True)
+    mt = m.t()  # if complex: mt = m.t().conj()
+    return fact * m.matmul(mt).squeeze()
+
+
 # The cooler Daniel (the faster callback)
 class FastEvaluationCallback(Callback):
     """
@@ -41,8 +86,8 @@ class FastEvaluationCallback(Callback):
         compute_energy_distance=True,
         compute_density_consistency=True,
         compute_mode_collapse=True,
+        compute_spectral_metrics=True,
         compute_diversity_metrics=True,
-        compute_fid=True,
         k_nearest=5,  # for coverage/precision
         mmd_kernel="rbf",  # 'rbf' or 'polynomial'
         device="auto",
@@ -64,7 +109,6 @@ class FastEvaluationCallback(Callback):
         self.compute_density_consistency = compute_density_consistency
         self.compute_mode_collapse = compute_mode_collapse
         self.compute_diversity_metrics = compute_diversity_metrics
-        self.compute_fid = compute_fid
         self.k_nearest = k_nearest
         self.mmd_kernel = mmd_kernel
         self.device = device
@@ -76,7 +120,6 @@ class FastEvaluationCallback(Callback):
         # Store metrics history
         self.metrics_history = {
             "epoch": [],
-            "fid": [],
             "wasserstein_distance": [],
             "mmd": [],
             "coverage": [],
@@ -102,10 +145,6 @@ class FastEvaluationCallback(Callback):
         if (
             self.feature_extractor_name and pl_module.input_dim > 2
         ):  # Assume images if dim > 2
-            self._setup_feature_extractor()
-        elif self.compute_fid and self.dataset_type == "image":
-            # Force feature extractor setup for FID even if not specified
-            self.feature_extractor_name = "mobilenet"
             self._setup_feature_extractor()
 
     def _setup_feature_extractor(self):
@@ -170,7 +209,7 @@ class FastEvaluationCallback(Callback):
                 if feat.dim() > 2:
                     feat = F.adaptive_avg_pool2d(feat, (1, 1))
                 feat = feat.view(feat.size(0), -1)  # Flatten
-                features.append(feat)
+                features.append(feat.cpu())
 
         return torch.cat(features, dim=0)
 
@@ -179,11 +218,11 @@ class FastEvaluationCallback(Callback):
         if self.real_features_cache is not None:
             return
 
-        self.logger.debug("Caching real data features...")
+        self.logger.info("Caching real data features...")
         real_samples = []
 
         # Sample from training data
-        train_loader = trainer.datamodule.train_dataloader()
+        train_loader = trainer.train_dataloader
         samples_collected = 0
 
         for batch in train_loader:
@@ -203,8 +242,8 @@ class FastEvaluationCallback(Callback):
 
         # Extract features
         real_samples = real_samples.to(self.device)
-        self.real_features_cache = self._extract_features(real_samples)
-        self.logger.debug(f"Cached {len(self.real_features_cache)} real samples")
+        self.real_features_cache = self._extract_features(real_samples).cpu()
+        self.logger.info(f"Cached {len(self.real_features_cache)} real samples")
 
     def _generate_samples(self, pl_module):
         """Generate samples from the model"""
@@ -249,15 +288,13 @@ class FastEvaluationCallback(Callback):
                 min(real_features.shape[1], 10)
             ):  # Limit to first 10 dims for speed
                 wd = wasserstein_distance(
-                    real_features[:, dim].cpu().numpy(),
-                    fake_features[:, dim].cpu().numpy(),
+                    real_features[:, dim].numpy(), fake_features[:, dim].numpy()
                 )
                 distances.append(wd)
             return np.mean(distances)
         else:
             return wasserstein_distance(
-                real_features.flatten().cpu().numpy(),
-                fake_features.flatten().cpu().numpy(),
+                real_features.flatten().numpy(), fake_features.flatten().numpy()
             )
 
     def _compute_mmd(self, real_features, fake_features, kernel="rbf"):
@@ -473,80 +510,7 @@ class FastEvaluationCallback(Callback):
             "distance_entropy": distance_entropy,
         }
 
-    def _compute_fid(self, real_features, fake_features):
-        """
-        Compute Fréchet Inception Distance (FID) using GPU operations.
-        FID measures the distance between two multivariate Gaussians.
-        """
-        # Ensure we have enough samples for stable statistics
-        if len(real_features) < 10 or len(fake_features) < 10:
-            return float("inf")
-
-        # Compute means
-        real_features = real_features.to(self.device)
-        mu_real = torch.mean(real_features, dim=0).to(self.device)
-        mu_fake = torch.mean(fake_features, dim=0).to(self.device)
-
-        # Compute covariance matrices
-        real_centered = real_features - mu_real
-        fake_centered = fake_features - mu_fake
-
-        sigma_real = torch.matmul(real_centered.t(), real_centered) / (
-            len(real_features) - 1
-        )
-        sigma_fake = torch.matmul(fake_centered.t(), fake_centered) / (
-            len(fake_features) - 1
-        )
-
-        # Add small diagonal for numerical stability
-        eps = 1e-6
-        sigma_real += eps * torch.eye(sigma_real.shape[0], device=self.device)
-        sigma_fake += eps * torch.eye(sigma_fake.shape[0], device=self.device)
-
-        # Compute mean difference squared
-        diff = mu_real - mu_fake
-        mean_diff_sq = torch.dot(diff, diff)
-
-        # Compute trace of covariances
-        tr_sigma_real = torch.trace(sigma_real)
-        tr_sigma_fake = torch.trace(sigma_fake)
-
-        # Compute sqrt(sigma_real @ sigma_fake) using eigendecomposition
-        # This is more stable than direct matrix square root
-        try:
-            # Compute sigma_real^(1/2) @ sigma_fake @ sigma_real^(1/2)
-            eigenvals_real, eigenvecs_real = torch.linalg.eigh(sigma_real)
-            eigenvals_real = torch.clamp(eigenvals_real, min=eps)  # Ensure positive
-
-            sqrt_sigma_real = (
-                eigenvecs_real
-                @ torch.diag(torch.sqrt(eigenvals_real))
-                @ eigenvecs_real.t()
-            )
-
-            # Compute sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
-            middle_matrix = sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
-            eigenvals_middle, _ = torch.linalg.eigh(middle_matrix)
-            eigenvals_middle = torch.clamp(
-                eigenvals_middle, min=0
-            )  # Ensure non-negative
-
-            tr_sqrt_product = torch.sum(torch.sqrt(eigenvals_middle))
-
-        except Exception as e:
-            # Fallback to approximation if eigendecomposition fails
-            self.logger.warning(f"FID computation failed with eigendecomposition: {e}")
-            # Use Frobenius norm approximation: ||A||_F ≈ sqrt(tr(A^T A))
-            product_approx = torch.matmul(sigma_real, sigma_fake)
-            tr_sqrt_product = torch.sqrt(torch.trace(product_approx) + eps)
-
-        # Compute FID
-        fid = mean_diff_sq + tr_sigma_real + tr_sigma_fake - 2 * tr_sqrt_product
-
-        return fid.item()
-
     @rank_zero_only
-    @torch.no_grad()
     def on_train_epoch_end(self, trainer, pl_module):
         """Run evaluation at the end of train epoch"""
         if trainer.current_epoch % self.eval_every_n_epochs != 0:
@@ -559,22 +523,16 @@ class FastEvaluationCallback(Callback):
         self._cache_real_data(trainer)
 
         # Generate samples
-        self.logger.debug(f"Generating {self.num_samples} samples for evaluation...")
+        self.logger.info(f"Generating {self.num_samples} samples for evaluation...")
         generated_samples = self._generate_samples(pl_module)
 
         # Extract features
         generated_samples = generated_samples.to(self.device)
-        fake_features = self._extract_features(generated_samples)
+        fake_features = self._extract_features(generated_samples).cpu()
 
         metrics = {}
 
-        self.logger.debug("Computing metrics...")
-
-        # Compute FID
-        if self.compute_fid:
-            fid = self._compute_fid(self.real_features_cache, fake_features)
-            metrics["fid"] = fid
-            self.logger.debug("Computed FID.")
+        self.logger.info("Computing metrics...")
 
         # Compute Wasserstein distance
         if self.compute_wasserstein:
@@ -582,7 +540,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics["wasserstein_distance"] = wd
-            self.logger.debug("Computed Wasserstein distance.")
+            self.logger.info("Computed Wasserstein distance.")
 
         # Compute MMD
         if self.compute_mmd:
@@ -590,7 +548,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features, self.mmd_kernel
             )
             metrics["mmd"] = mmd
-            self.logger.debug("Computed MMD.")
+            self.logger.info("Computed MMD.")
 
         # Compute Coverage and Precision
         if self.compute_coverage_precision:
@@ -599,7 +557,7 @@ class FastEvaluationCallback(Callback):
             )
             metrics["coverage"] = coverage
             metrics["precision"] = precision
-            self.logger.debug("Computed coverage and precision.")
+            self.logger.info("Computed coverage and precision.")
 
         # Compute Jensen-Shannon Divergence
         if self.compute_js_divergence:
@@ -607,7 +565,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics["js_divergence"] = js_div
-            self.logger.debug("Computed JS divergence.")
+            self.logger.info("Computed JS divergence.")
 
         # Compute Energy Distance
         if self.compute_energy_distance:
@@ -615,7 +573,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics["energy_distance"] = energy_dist
-            self.logger.debug("Computed energy distance.")
+            self.logger.info("Computed energy distance.")
 
         # Compute Density Consistency
         if self.compute_density_consistency:
@@ -623,45 +581,29 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics.update(density_metrics)
-            self.logger.debug("Computed density consistency.")
+            self.logger.info("Computed density consistency.")
 
         # Compute Mode Collapse Metrics
         if self.compute_mode_collapse:
             mode_metrics = self._compute_mode_collapse_metrics(fake_features)
             metrics.update(mode_metrics)
-            self.logger.debug("Computed mode collapse metrics.")
+            self.logger.info("Computed mode collapse metrics.")
 
         # Compute Diversity Metrics
         if self.compute_diversity_metrics:
             diversity_metrics = self._compute_diversity_metrics(fake_features)
             metrics.update(diversity_metrics)
-            self.logger.debug("Computed diversity metrics.")
+            self.logger.info("Computed diversity metrics.")
 
         # Log metrics
         for name, value in metrics.items():
             pl_module.log(f"eval/{name}", value, sync_dist=True)
-
-        self.logger.debug("Logged metrics to Lightning logger.")
 
         # Store in history
         self.metrics_history["epoch"].append(trainer.current_epoch)
         for metric_name, value in metrics.items():
             if metric_name in self.metrics_history:
                 self.metrics_history[metric_name].append(value)
-
-        self.logger.debug("Logged metrics to metric history.")
-
-        # Flush torch cache of all the variables assigned in this epoch that are no longer in use
-
-        # Explicitly delete large tensors to free GPU memory
-        del fake_features
-        del generated_samples
-
-        # Flush CUDA cache if using GPU
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        self.logger.debug("Cleared cache.")
 
     def get_metrics_history(self):
         """Return the complete metrics history"""
@@ -709,7 +651,7 @@ def create_evaluation_callback(
             compute_energy_distance=False,
             compute_density_consistency=False,
             compute_mode_collapse=True,  # Important for generative models
-            compute_fid=False,
+            compute_spectral_metrics=False,
             compute_diversity_metrics=False,
         )
 
@@ -730,7 +672,7 @@ def create_evaluation_callback(
             compute_energy_distance=True,
             compute_density_consistency=True,
             compute_mode_collapse=True,
-            compute_fid=True if data_type == "image" else False,
+            compute_spectral_metrics=True,
             compute_diversity_metrics=True,
         )
 
@@ -751,7 +693,7 @@ def create_evaluation_callback(
                 compute_energy_distance=False,  # Skip for images (expensive)
                 compute_density_consistency=True,
                 compute_mode_collapse=True,
-                compute_fid=False,
+                compute_spectral_metrics=True,
                 compute_diversity_metrics=True,
             )
         else:  # 2D or low-dimensional data
@@ -769,6 +711,6 @@ def create_evaluation_callback(
                 compute_energy_distance=True,
                 compute_density_consistency=True,
                 compute_mode_collapse=True,
-                compute_fid=False,
+                compute_spectral_metrics=True,
                 compute_diversity_metrics=True,
             )

@@ -204,6 +204,7 @@ __marimo__/
 
 # Logs
 lightning_logs/
+logs/
 
 # Outputs
 *.png
