@@ -320,7 +320,7 @@ def main(cfg: DictConfig):
     log.info("Training model...")
     tracker = MetricTracker()
     eval_callback = create_evaluation_callback(
-        cfg, model_type="vector_field", evaluation_level="standard"
+        log, cfg, model_type="vector_field", evaluation_level="standard"
     )
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,

@@ -371,12 +371,12 @@ def main(cfg: DictConfig):
     log.info("Training model...")
     tracker = MetricTracker()
     eval_callback = create_evaluation_callback(
-        cfg, model_type="diffusion", evaluation_level="standard"
+        log, cfg, model_type="diffusion", evaluation_level="standard"
     )
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         accelerator="auto",
-        callbacks=[tracker],
+        callbacks=[tracker, eval_callback],
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,

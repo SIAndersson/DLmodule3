@@ -4,14 +4,13 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as models
 import torchvision.transforms as transforms
 from dotenv import load_dotenv
 from pytorch_lightning.callbacks import Callback
-from scipy.spatial.distance import jensenshannon
+from pytorch_lightning.utilities import rank_zero_only
 from scipy.stats import entropy, kstest, wasserstein_distance
-from sklearn.metrics.pairwise import polynomial_kernel, rbf_kernel
-from sklearn.neighbors import NearestNeighbors
 
 load_dotenv()
 
@@ -72,6 +71,7 @@ class FastEvaluationCallback(Callback):
 
     def __init__(
         self,
+        logger,
         model_type="vector_field",  # vector_field or diffusion
         dataset_type="2d",  # 2d or image
         eval_every_n_epochs=5,
@@ -92,6 +92,7 @@ class FastEvaluationCallback(Callback):
         mmd_kernel="rbf",  # 'rbf' or 'polynomial'
         device="auto",
     ):
+        self.logger = logger
         self.model_type = model_type
         self.dataset_type = dataset_type
         self.eval_every_n_epochs = eval_every_n_epochs
@@ -107,7 +108,6 @@ class FastEvaluationCallback(Callback):
         self.compute_energy_distance = compute_energy_distance
         self.compute_density_consistency = compute_density_consistency
         self.compute_mode_collapse = compute_mode_collapse
-        self.compute_spectral_metrics = compute_spectral_metrics
         self.compute_diversity_metrics = compute_diversity_metrics
         self.k_nearest = k_nearest
         self.mmd_kernel = mmd_kernel
@@ -130,8 +130,6 @@ class FastEvaluationCallback(Callback):
             "log_density_ratio": [],
             "mode_collapse_score": [],
             "duplicate_ratio": [],
-            "spectral_divergence": [],
-            "condition_number_ratio": [],
             "mean_pairwise_distance": [],
             "min_pairwise_distance": [],
             "std_pairwise_distance": [],
@@ -172,7 +170,7 @@ class FastEvaluationCallback(Callback):
         # Image preprocessing
         self.preprocess = transforms.Compose(
             [
-                transforms.Resize(224),
+                transforms.Resize((224, 224)),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
                 ),
@@ -188,15 +186,28 @@ class FastEvaluationCallback(Callback):
         for i in range(0, len(samples), self.batch_size):
             batch = samples[i : i + self.batch_size]
 
-            # Ensure proper format for image models
-            if batch.dim() == 4 and batch.shape[1] == 3:  # RGB images
+            # Handle different input formats and ensure correct preprocessing
+            if batch.dim() == 4:
+                # Check if values are in [0,1] or [-1,1] range and convert to [0,1] if needed
+                if batch.min() < 0:
+                    batch = (batch + 1) / 2  # Convert from [-1,1] to [0,1]
+
+                # Ensure RGB format
+                if batch.shape[1] == 1:  # Grayscale
+                    batch = batch.repeat(1, 3, 1, 1)  # Convert to RGB
+                elif batch.shape[1] != 3:
+                    raise ValueError(f"Expected 1 or 3 channels, got {batch.shape[1]}")
+
+                # Apply preprocessing (resize + normalize)
                 batch = self.preprocess(batch)
-            elif batch.dim() == 4 and batch.shape[1] == 1:  # Grayscale
-                batch = batch.repeat(1, 3, 1, 1)  # Convert to RGB
-                batch = self.preprocess(batch)
+            else:
+                raise ValueError(f"Expected 4D tensor for images, got {batch.dim()}D")
 
             with torch.no_grad():
                 feat = self.feature_extractor(batch)
+                # Global average pooling if spatial dimensions remain
+                if feat.dim() > 2:
+                    feat = F.adaptive_avg_pool2d(feat, (1, 1))
                 feat = feat.view(feat.size(0), -1)  # Flatten
                 features.append(feat.cpu())
 
@@ -207,7 +218,7 @@ class FastEvaluationCallback(Callback):
         if self.real_features_cache is not None:
             return
 
-        print("Caching real data features...")
+        self.logger.info("Caching real data features...")
         real_samples = []
 
         # Sample from training data
@@ -232,7 +243,7 @@ class FastEvaluationCallback(Callback):
         # Extract features
         real_samples = real_samples.to(self.device)
         self.real_features_cache = self._extract_features(real_samples).cpu()
-        print(f"Cached {len(self.real_features_cache)} real samples")
+        self.logger.info(f"Cached {len(self.real_features_cache)} real samples")
 
     def _generate_samples(self, pl_module):
         """Generate samples from the model"""
@@ -260,7 +271,7 @@ class FastEvaluationCallback(Callback):
                         samples = pl_module.fast_sample(current_batch_size, self.device)
                     elif self.model_type == "diffusion":
                         samples = pl_module.ddim_sample(
-                            (current_batch_size, 3, 264, 264), self.device
+                            (current_batch_size, 3, 256, 256), self.device
                         )
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
@@ -287,9 +298,9 @@ class FastEvaluationCallback(Callback):
             )
 
     def _compute_mmd(self, real_features, fake_features, kernel="rbf"):
-        """Compute Maximum Mean Discrepancy"""
-        X = real_features.numpy()
-        Y = fake_features.numpy()
+        """Compute MMD using GPU operations"""
+        X = real_features
+        Y = fake_features
 
         if kernel == "rbf":
             # Use multiple bandwidths for better results
@@ -297,263 +308,200 @@ class FastEvaluationCallback(Callback):
             mmd_vals = []
 
             for bw in bandwidths:
-                K_XX = rbf_kernel(X, X, gamma=1 / (2 * bw**2))
-                K_YY = rbf_kernel(Y, Y, gamma=1 / (2 * bw**2))
-                K_XY = rbf_kernel(X, Y, gamma=1 / (2 * bw**2))
+                gamma = 1.0 / (2 * bw**2)
+
+                # Compute kernel matrices on GPU
+                XX = torch.cdist(X, X, p=2) ** 2
+                YY = torch.cdist(Y, Y, p=2) ** 2
+                XY = torch.cdist(X, Y, p=2) ** 2
+
+                K_XX = torch.exp(-gamma * XX)
+                K_YY = torch.exp(-gamma * YY)
+                K_XY = torch.exp(-gamma * XY)
 
                 mmd_val = K_XX.mean() + K_YY.mean() - 2 * K_XY.mean()
-                mmd_vals.append(mmd_val)
+                mmd_vals.append(mmd_val.item())
 
             return np.mean(mmd_vals)
 
         elif kernel == "polynomial":
-            K_XX = polynomial_kernel(X, X, degree=2)
-            K_YY = polynomial_kernel(Y, Y, degree=2)
-            K_XY = polynomial_kernel(X, Y, degree=2)
+            # Polynomial kernel: (X·Y + 1)^d
+            degree = 2
+            K_XX = (torch.matmul(X, X.t()) + 1) ** degree
+            K_YY = (torch.matmul(Y, Y.t()) + 1) ** degree
+            K_XY = (torch.matmul(X, Y.t()) + 1) ** degree
 
-            return K_XX.mean() + K_YY.mean() - 2 * K_XY.mean()
+            mmd_val = K_XX.mean() + K_YY.mean() - 2 * K_XY.mean()
+            return mmd_val.item()
 
     def _compute_coverage_precision(self, real_features, fake_features, k=5):
         """Compute Coverage and Precision metrics using k-NN"""
-        real_np = real_features.numpy()
-        fake_np = fake_features.numpy()
+        # Compute all pairwise distances on GPU
+        real_real_dist = torch.cdist(real_features, real_features, p=2)
+        fake_fake_dist = torch.cdist(fake_features, fake_features, p=2)
+        real_fake_dist = torch.cdist(real_features, fake_features, p=2)
 
-        # Fit k-NN on real data
-        real_nn = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
-        real_nn.fit(real_np)
+        # Get k-th nearest neighbor distances
+        real_knn_dist, _ = torch.topk(real_real_dist, k + 1, dim=1, largest=False)
+        real_radii = real_knn_dist[:, k]  # k-th nearest neighbor distance
 
-        # Fit k-NN on fake data
-        fake_nn = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
-        fake_nn.fit(fake_np)
+        fake_knn_dist, _ = torch.topk(fake_fake_dist, k + 1, dim=1, largest=False)
+        fake_radii = fake_knn_dist[:, k]
 
-        # Coverage: fraction of real samples whose k-NN sphere contains at least one fake sample
-        real_distances, _ = real_nn.kneighbors(real_np)
-        real_radii = real_distances[:, k]  # k-th nearest neighbor distance
+        # Coverage: fraction of real samples covered by fake samples
+        fake_to_real_min_dist, _ = torch.min(real_fake_dist, dim=1)
+        coverage = (fake_to_real_min_dist < real_radii).float().mean().item()
 
-        fake_to_real_distances, _ = fake_nn.kneighbors(real_np)
-        fake_to_real_min_dist = fake_to_real_distances[:, 1]  # closest fake sample
-
-        coverage = (fake_to_real_min_dist < real_radii).mean()
-
-        # Precision: fraction of fake samples whose k-NN sphere contains at least one real sample
-        fake_distances, _ = fake_nn.kneighbors(fake_np)
-        fake_radii = fake_distances[:, k]
-
-        real_to_fake_distances, _ = real_nn.kneighbors(fake_np)
-        real_to_fake_min_dist = real_to_fake_distances[:, 1]
-
-        precision = (real_to_fake_min_dist < fake_radii).mean()
+        # Precision: fraction of fake samples that are close to real samples
+        real_to_fake_min_dist, _ = torch.min(real_fake_dist, dim=0)
+        precision = (real_to_fake_min_dist < fake_radii).float().mean().item()
 
         return coverage, precision
 
     def _compute_js_divergence(self, real_features, fake_features, bins=50):
         """Compute Jensen-Shannon divergence between feature distributions"""
+        eps = 1e-10
         js_divs = []
 
-        # Compute for each feature dimension (limit to first 10 for speed)
         n_dims = min(real_features.shape[1], 10)
-
         for dim in range(n_dims):
-            real_vals = real_features[:, dim].numpy()
-            fake_vals = fake_features[:, dim].numpy()
+            real_vals = real_features[:, dim]
+            fake_vals = fake_features[:, dim]
 
-            # Create histograms with same bins
-            min_val = min(real_vals.min(), fake_vals.min())
-            max_val = max(real_vals.max(), fake_vals.max())
-
-            if max_val == min_val:
-                js_divs.append(0.0)
+            min_val = torch.min(real_vals.min(), fake_vals.min())
+            max_val = torch.max(real_vals.max(), fake_vals.max())
+            if min_val == max_val:
+                js_divs.append(torch.tensor(0.0, device=real_vals.device))
                 continue
 
-            bins_edges = np.linspace(min_val, max_val, bins + 1)
+            real_hist = torch.histc(
+                real_vals, bins=bins, min=min_val.item(), max=max_val.item()
+            )
+            fake_hist = torch.histc(
+                fake_vals, bins=bins, min=min_val.item(), max=max_val.item()
+            )
 
-            real_hist, _ = np.histogram(real_vals, bins=bins_edges, density=True)
-            fake_hist, _ = np.histogram(fake_vals, bins=bins_edges, density=True)
-
-            # Add small epsilon to avoid log(0)
-            eps = 1e-10
             real_hist = real_hist + eps
             fake_hist = fake_hist + eps
 
-            # Normalize
-            real_hist = real_hist / real_hist.sum()
-            fake_hist = fake_hist / fake_hist.sum()
+            real_hist /= real_hist.sum()
+            fake_hist /= fake_hist.sum()
+            m = 0.5 * (real_hist + fake_hist)
 
-            js_div = jensenshannon(real_hist, fake_hist, base=2)
-            js_divs.append(js_div)
+            js = (
+                0.5
+                * (
+                    real_hist * torch.log2(real_hist / m)
+                    + fake_hist * torch.log2(fake_hist / m)
+                ).sum()
+            )
+            js_divs.append(js)
 
-        return np.mean(js_divs)
+        return torch.stack(js_divs).mean().item()
 
     def _compute_energy_distance(self, real_features, fake_features):
         """Compute Energy Distance between two samples"""
-        X = real_features.numpy()
-        Y = fake_features.numpy()
+        X = real_features
+        Y = fake_features
 
         # Subsample for efficiency if datasets are large
         if len(X) > 500:
-            idx_x = np.random.choice(len(X), 500, replace=False)
+            idx_x = torch.randperm(len(X), device=self.device)[:500]
             X = X[idx_x]
         if len(Y) > 500:
-            idx_y = np.random.choice(len(Y), 500, replace=False)
+            idx_y = torch.randperm(len(Y), device=self.device)[:500]
             Y = Y[idx_y]
 
-        # Compute pairwise distances
-        def pairwise_distances(A, B):
-            return np.sqrt(((A[:, None, :] - B[None, :, :]) ** 2).sum(axis=2))
-
-        # E[|X-Y|]
-        dXY = pairwise_distances(X, Y).mean()
-
-        # E[|X-X'|]
-        dXX = pairwise_distances(X, X).mean()
-
-        # E[|Y-Y'|]
-        dYY = pairwise_distances(Y, Y).mean()
+        # Compute pairwise distances on GPU
+        dXY = torch.cdist(X, Y, p=2).mean()
+        dXX = torch.cdist(X, X, p=2).mean()
+        dYY = torch.cdist(Y, Y, p=2).mean()
 
         energy_distance = 2 * dXY - dXX - dYY
-        return energy_distance
+        return energy_distance.item()
 
     def _compute_density_consistency(self, real_features, fake_features, k=5):
         """Measure how well fake samples match real data density using k-NN density estimation"""
-        real_np = real_features.numpy()
-        fake_np = fake_features.numpy()
+        # Compute distances for density estimation
+        real_real_dist = torch.cdist(real_features, real_features, p=2)
+        real_fake_dist = torch.cdist(real_features, fake_features, p=2)
 
-        # Fit k-NN on real data for density estimation
-        nn = NearestNeighbors(n_neighbors=k + 1)
-        nn.fit(real_np)
+        # Get k-th nearest neighbor distances
+        real_knn_dist, _ = torch.topk(real_real_dist, k + 1, dim=1, largest=False)
+        real_densities = 1.0 / (real_knn_dist[:, k] + 1e-10)
 
-        # Get k-NN distances for real samples (exclude self)
-        real_distances, _ = nn.kneighbors(real_np)
-        real_densities = 1.0 / (real_distances[:, k] + 1e-10)  # k-th neighbor distance
+        fake_knn_dist, _ = torch.topk(real_fake_dist, k + 1, dim=0, largest=False)
+        fake_densities = 1.0 / (fake_knn_dist[k, :] + 1e-10)
 
-        # Get k-NN distances for fake samples
-        fake_distances, _ = nn.kneighbors(fake_np)
-        fake_densities = 1.0 / (fake_distances[:, k] + 1e-10)
+        # Convert to CPU for statistical tests
+        real_densities_cpu = real_densities.cpu().numpy()
+        fake_densities_cpu = fake_densities.cpu().numpy()
 
-        # Compare density distributions using KS test
-        ks_stat, _ = kstest(fake_densities, real_densities)
+        # KS test
+        ks_stat, _ = kstest(fake_densities_cpu, real_densities_cpu)
 
-        # Also compute density ratio statistics
-        density_ratio = np.log(fake_densities.mean() / real_densities.mean() + 1e-10)
+        # Density ratio
+        density_ratio = torch.log(
+            fake_densities.mean() / (real_densities.mean() + 1e-10)
+        ).item()
 
         return {"density_ks_stat": ks_stat, "log_density_ratio": density_ratio}
 
     def _compute_mode_collapse_metrics(self, fake_features, k=10):
         """Detect mode collapse using intra-cluster distance and nearest neighbor analysis"""
-        fake_np = fake_features.numpy()
-
-        if len(fake_np) < k:
+        if len(fake_features) < k:
             return {"mode_collapse_score": 0.0, "duplicate_ratio": 0.0}
 
-        # Fit k-NN on fake samples
-        nn = NearestNeighbors(n_neighbors=k + 1)
-        nn.fit(fake_np)
+        # Compute pairwise distances
+        distances = torch.cdist(fake_features, fake_features, p=2)
 
-        distances, indices = nn.kneighbors(fake_np)
+        # Get k-th nearest neighbor distances
+        knn_distances, _ = torch.topk(distances, k + 1, dim=1, largest=False)
 
-        # Mode collapse score: average distance to k-th nearest neighbor
-        # Lower values indicate potential mode collapse
-        knn_distances = distances[:, k]  # k-th neighbor distance
-        mode_collapse_score = knn_distances.mean()
+        # Mode collapse score: average k-th nearest neighbor distance
+        mode_collapse_score = knn_distances[:, k].mean().item()
 
-        # Duplicate detection: samples with very small nearest neighbor distance
-        duplicate_threshold = np.percentile(
-            distances[:, 1], 5
-        )  # 5th percentile of 1-NN distances
-        duplicate_ratio = (distances[:, 1] < duplicate_threshold).mean()
+        # Duplicate detection using 1st nearest neighbor
+        nn_distances = knn_distances[:, 1]  # 1st nearest neighbor
+        duplicate_threshold = torch.quantile(nn_distances, 0.05)  # 5th percentile
+        duplicate_ratio = (nn_distances < duplicate_threshold).float().mean().item()
 
         return {
             "mode_collapse_score": mode_collapse_score,
             "duplicate_ratio": duplicate_ratio,
         }
 
-    def _compute_spectral_metrics(self, real_features, fake_features):
-        """Compute spectral properties of the feature matrices"""
-        real_np = real_features.numpy()
-        fake_np = fake_features.numpy()
-
-        # Center the data
-        real_centered = real_np - real_np.mean(axis=0)
-        fake_centered = fake_np - fake_np.mean(axis=0)
-
-        # Compute covariance matrices
-        real_cov = np.cov(real_centered.T)
-        fake_cov = np.cov(fake_centered.T)
-
-        # Compute eigenvalues
-        real_eigenvals = np.linalg.eigvals(real_cov)
-        fake_eigenvals = np.linalg.eigvals(fake_cov)
-
-        # Sort eigenvalues in descending order
-        real_eigenvals = np.sort(real_eigenvals)[::-1]
-        fake_eigenvals = np.sort(fake_eigenvals)[::-1]
-
-        # Take only positive eigenvalues and limit to top 10 for speed
-        real_eigenvals = real_eigenvals[real_eigenvals > 1e-10][:10]
-        fake_eigenvals = fake_eigenvals[fake_eigenvals > 1e-10][:10]
-
-        # Spectral divergence (compare eigenvalue distributions)
-        min_len = min(len(real_eigenvals), len(fake_eigenvals))
-        if min_len > 0:
-            spectral_divergence = np.mean(
-                np.abs(
-                    np.log(real_eigenvals[:min_len] + 1e-10)
-                    - np.log(fake_eigenvals[:min_len] + 1e-10)
-                )
-            )
-        else:
-            spectral_divergence = float("inf")
-
-        # Condition number ratio
-        real_condition = (
-            real_eigenvals[0] / (real_eigenvals[-1] + 1e-10)
-            if len(real_eigenvals) > 0
-            else 1.0
-        )
-        fake_condition = (
-            fake_eigenvals[0] / (fake_eigenvals[-1] + 1e-10)
-            if len(fake_eigenvals) > 0
-            else 1.0
-        )
-        condition_ratio = np.log(fake_condition / (real_condition + 1e-10))
-
-        return {
-            "spectral_divergence": spectral_divergence,
-            "condition_number_ratio": condition_ratio,
-        }
-
     def _compute_diversity_metrics(self, fake_features):
         """Compute diversity metrics for generated samples"""
-        fake_np = fake_features.numpy()
-
-        # Pairwise distances between generated samples
-        def pairwise_l2_distances(X):
-            diff = X[:, None, :] - X[None, :, :]
-            return np.sqrt((diff**2).sum(axis=2))
-
         # Subsample for efficiency
-        if len(fake_np) > 500:
-            idx = np.random.choice(len(fake_np), 500, replace=False)
-            fake_subset = fake_np[idx]
+        if len(fake_features) > 500:
+            idx = torch.randperm(len(fake_features), device=self.device)[:500]
+            fake_subset = fake_features[idx]
         else:
-            fake_subset = fake_np
+            fake_subset = fake_features
 
-        distances = pairwise_l2_distances(fake_subset)
+        # Compute pairwise distances
+        distances = torch.cdist(fake_subset, fake_subset, p=2).to(self.device)
 
         # Remove diagonal (self-distances)
-        mask = ~np.eye(distances.shape[0], dtype=bool)
+        mask = ~torch.eye(distances.shape[0], dtype=torch.bool, device=self.device)
         distances_flat = distances[mask]
 
         # Diversity metrics
-        mean_pairwise_distance = distances_flat.mean()
-        min_pairwise_distance = distances_flat.min()
-        std_pairwise_distance = distances_flat.std()
+        mean_pairwise_distance = distances_flat.mean().item()
+        min_pairwise_distance = distances_flat.min().item()
+        std_pairwise_distance = distances_flat.std().item()
 
-        # Effective sample size (entropy of distance distribution)
-        hist, _ = np.histogram(distances_flat, bins=50, density=True)
+        # Distance entropy (convert to CPU for histogram)
+        hist = torch.histc(
+            distances_flat.cpu(),
+            bins=50,
+            min=distances_flat.min().item(),
+            max=distances_flat.max().item(),
+        )
         hist = hist + 1e-10  # Avoid log(0)
         hist = hist / hist.sum()
-        distance_entropy = entropy(hist, base=2)
+        distance_entropy = entropy(hist.numpy(), base=2)
 
         return {
             "mean_pairwise_distance": mean_pairwise_distance,
@@ -562,16 +510,20 @@ class FastEvaluationCallback(Callback):
             "distance_entropy": distance_entropy,
         }
 
+    @rank_zero_only
     def on_train_epoch_end(self, trainer, pl_module):
         """Run evaluation at the end of train epoch"""
         if trainer.current_epoch % self.eval_every_n_epochs != 0:
+            return
+
+        if not trainer.is_global_zero:
             return
 
         # Cache real data on first evaluation
         self._cache_real_data(trainer)
 
         # Generate samples
-        print(f"Generating {self.num_samples} samples for evaluation...")
+        self.logger.info(f"Generating {self.num_samples} samples for evaluation...")
         generated_samples = self._generate_samples(pl_module)
 
         # Extract features
@@ -580,12 +532,15 @@ class FastEvaluationCallback(Callback):
 
         metrics = {}
 
+        self.logger.info("Computing metrics...")
+
         # Compute Wasserstein distance
         if self.compute_wasserstein:
             wd = self._compute_wasserstein_distance(
                 self.real_features_cache, fake_features
             )
             metrics["wasserstein_distance"] = wd
+            self.logger.info("Computed Wasserstein distance.")
 
         # Compute MMD
         if self.compute_mmd:
@@ -593,6 +548,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features, self.mmd_kernel
             )
             metrics["mmd"] = mmd
+            self.logger.info("Computed MMD.")
 
         # Compute Coverage and Precision
         if self.compute_coverage_precision:
@@ -601,6 +557,7 @@ class FastEvaluationCallback(Callback):
             )
             metrics["coverage"] = coverage
             metrics["precision"] = precision
+            self.logger.info("Computed coverage and precision.")
 
         # Compute Jensen-Shannon Divergence
         if self.compute_js_divergence:
@@ -608,6 +565,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics["js_divergence"] = js_div
+            self.logger.info("Computed JS divergence.")
 
         # Compute Energy Distance
         if self.compute_energy_distance:
@@ -615,6 +573,7 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics["energy_distance"] = energy_dist
+            self.logger.info("Computed energy distance.")
 
         # Compute Density Consistency
         if self.compute_density_consistency:
@@ -622,27 +581,23 @@ class FastEvaluationCallback(Callback):
                 self.real_features_cache, fake_features
             )
             metrics.update(density_metrics)
+            self.logger.info("Computed density consistency.")
 
         # Compute Mode Collapse Metrics
         if self.compute_mode_collapse:
             mode_metrics = self._compute_mode_collapse_metrics(fake_features)
             metrics.update(mode_metrics)
-
-        # Compute Spectral Metrics
-        if self.compute_spectral_metrics:
-            spectral_metrics = self._compute_spectral_metrics(
-                self.real_features_cache, fake_features
-            )
-            metrics.update(spectral_metrics)
+            self.logger.info("Computed mode collapse metrics.")
 
         # Compute Diversity Metrics
         if self.compute_diversity_metrics:
             diversity_metrics = self._compute_diversity_metrics(fake_features)
             metrics.update(diversity_metrics)
+            self.logger.info("Computed diversity metrics.")
 
         # Log metrics
         for name, value in metrics.items():
-            pl_module.log(f"eval/{name}", value)
+            pl_module.log(f"eval/{name}", value, sync_dist=True)
 
         # Store in history
         self.metrics_history["epoch"].append(trainer.current_epoch)
@@ -659,14 +614,18 @@ class MetricTracker(Callback):
     def __init__(self):
         self.train_losses = []
 
+    @rank_zero_only
     def on_train_epoch_end(self, trainer, pl_module):
+        if not trainer.is_global_zero:
+            return
+
         loss = trainer.callback_metrics.get("train_loss")
         if loss is not None:
             self.train_losses.append(loss.item())
 
 
 def create_evaluation_callback(
-    cfg, model_type="diffusion", evaluation_level="standard"
+    log, cfg, model_type="diffusion", evaluation_level="standard"
 ):
     """Create appropriate evaluation callback"""
 
@@ -678,6 +637,7 @@ def create_evaluation_callback(
     if evaluation_level == "minimal":
         # Fastest evaluation - core metrics only
         return FastEvaluationCallback(
+            log,
             model_type=model_type,
             dataset_type=data_type,
             eval_every_n_epochs=5,
@@ -698,6 +658,7 @@ def create_evaluation_callback(
     elif evaluation_level == "comprehensive":
         # Full evaluation suite
         return FastEvaluationCallback(
+            log,
             model_type=model_type,
             dataset_type=data_type,
             eval_every_n_epochs=10,
@@ -718,10 +679,11 @@ def create_evaluation_callback(
     else:  # 'standard'
         if data_type == "image":
             return FastEvaluationCallback(
+                log,
                 model_type=model_type,
                 dataset_type=data_type,
                 eval_every_n_epochs=10,  # Less frequent for images
-                num_samples=1000,  # Moderate sample size
+                num_samples=500,  # Moderate sample size
                 feature_extractor="mobilenet",
                 cache_dir="./weights",
                 compute_coverage_precision=True,
@@ -736,6 +698,7 @@ def create_evaluation_callback(
             )
         else:  # 2D or low-dimensional data
             return FastEvaluationCallback(
+                log,
                 model_type=model_type,
                 dataset_type=data_type,
                 eval_every_n_epochs=5,
