@@ -367,6 +367,21 @@ def main(cfg: DictConfig):
     log.info("Initializing diffusion model...")
     model = DiffusionModel(cfg.model)
 
+    # Find appropriate values
+    if torch.cuda.is_available():
+        accelerator = "gpu"
+        devices = torch.cuda.device_count()
+        devices = 1
+        strategy = "auto"
+    elif torch.backends.mps.is_available():
+        accelerator = "mps"
+        devices = 1
+        strategy = "auto"
+    else:
+        accelerator = "cpu"
+        devices = "auto"
+        strategy = "auto"
+
     # Train model
     log.info("Training model...")
     tracker = MetricTracker()
@@ -375,7 +390,9 @@ def main(cfg: DictConfig):
     )
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
-        accelerator="auto",
+        accelerator=accelerator,
+        devices=devices,
+        strategy=strategy,
         callbacks=[tracker, eval_callback],
         enable_progress_bar=True,
         log_every_n_steps=10,

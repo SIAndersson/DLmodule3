@@ -138,9 +138,6 @@ class FastEvaluationCallback(Callback):
 
     def setup(self, trainer, pl_module, stage=None):
         """Setup feature extractor and cache real data features"""
-        if self.device == "auto":
-            self.device = pl_module.device
-
         # Setup feature extractor if needed
         if (
             self.feature_extractor_name and pl_module.input_dim > 2
@@ -288,13 +285,15 @@ class FastEvaluationCallback(Callback):
                 min(real_features.shape[1], 10)
             ):  # Limit to first 10 dims for speed
                 wd = wasserstein_distance(
-                    real_features[:, dim].numpy(), fake_features[:, dim].numpy()
+                    real_features[:, dim].detach().cpu().numpy(),
+                    fake_features[:, dim].detach().cpu().numpy(),
                 )
                 distances.append(wd)
             return np.mean(distances)
         else:
             return wasserstein_distance(
-                real_features.flatten().numpy(), fake_features.flatten().numpy()
+                real_features.flatten().detach().cpu().numpy(),
+                fake_features.flatten().detach().cpu().numpy(),
             )
 
     def _compute_mmd(self, real_features, fake_features, kernel="rbf"):
@@ -434,8 +433,8 @@ class FastEvaluationCallback(Callback):
         fake_densities = 1.0 / (fake_knn_dist[k, :] + 1e-10)
 
         # Convert to CPU for statistical tests
-        real_densities_cpu = real_densities.cpu().numpy()
-        fake_densities_cpu = fake_densities.cpu().numpy()
+        real_densities_cpu = real_densities.detach().cpu().numpy()
+        fake_densities_cpu = fake_densities.detach().cpu().numpy()
 
         # KS test
         ks_stat, _ = kstest(fake_densities_cpu, real_densities_cpu)
@@ -501,7 +500,7 @@ class FastEvaluationCallback(Callback):
         )
         hist = hist + 1e-10  # Avoid log(0)
         hist = hist / hist.sum()
-        distance_entropy = entropy(hist.numpy(), base=2)
+        distance_entropy = entropy(hist.detach().cpu().numpy(), base=2)
 
         return {
             "mean_pairwise_distance": mean_pairwise_distance,
@@ -519,91 +518,101 @@ class FastEvaluationCallback(Callback):
         if not trainer.is_global_zero:
             return
 
-        # Cache real data on first evaluation
-        self._cache_real_data(trainer)
+        if self.device == "auto" or isinstance(self.device, str):
+            self.device = pl_module.device
 
-        # Generate samples
-        self.logger.info(f"Generating {self.num_samples} samples for evaluation...")
-        generated_samples = self._generate_samples(pl_module)
+        pl_module.eval()
 
-        # Extract features
-        generated_samples = generated_samples.to(self.device)
-        fake_features = self._extract_features(generated_samples).cpu()
+        try:
+            # Cache real data on first evaluation
+            self._cache_real_data(trainer)
 
-        metrics = {}
+            # Generate samples
+            self.logger.info(f"Generating {self.num_samples} samples for evaluation...")
+            generated_samples = self._generate_samples(pl_module)
 
-        self.logger.info("Computing metrics...")
+            # Extract features
+            generated_samples = generated_samples.to(self.device)
+            fake_features = self._extract_features(generated_samples).cpu()
 
-        # Compute Wasserstein distance
-        if self.compute_wasserstein:
-            wd = self._compute_wasserstein_distance(
-                self.real_features_cache, fake_features
+            metrics = {}
+
+            self.logger.info("Computing metrics...")
+
+            # Compute Wasserstein distance
+            if self.compute_wasserstein:
+                wd = self._compute_wasserstein_distance(
+                    self.real_features_cache, fake_features
+                )
+                metrics["wasserstein_distance"] = wd
+                self.logger.info("Computed Wasserstein distance.")
+
+            # Compute MMD
+            if self.compute_mmd:
+                mmd = self._compute_mmd(
+                    self.real_features_cache, fake_features, self.mmd_kernel
+                )
+                metrics["mmd"] = mmd
+                self.logger.info("Computed MMD.")
+
+            # Compute Coverage and Precision
+            if self.compute_coverage_precision:
+                coverage, precision = self._compute_coverage_precision(
+                    self.real_features_cache, fake_features, self.k_nearest
+                )
+                metrics["coverage"] = coverage
+                metrics["precision"] = precision
+                self.logger.info("Computed coverage and precision.")
+
+            # Compute Jensen-Shannon Divergence
+            if self.compute_js_divergence:
+                js_div = self._compute_js_divergence(
+                    self.real_features_cache, fake_features
+                )
+                metrics["js_divergence"] = js_div
+                self.logger.info("Computed JS divergence.")
+
+            # Compute Energy Distance
+            if self.compute_energy_distance:
+                energy_dist = self._compute_energy_distance(
+                    self.real_features_cache, fake_features
+                )
+                metrics["energy_distance"] = energy_dist
+                self.logger.info("Computed energy distance.")
+
+            # Compute Density Consistency
+            if self.compute_density_consistency:
+                density_metrics = self._compute_density_consistency(
+                    self.real_features_cache, fake_features
+                )
+                metrics.update(density_metrics)
+                self.logger.info("Computed density consistency.")
+
+            # Compute Mode Collapse Metrics
+            if self.compute_mode_collapse:
+                mode_metrics = self._compute_mode_collapse_metrics(fake_features)
+                metrics.update(mode_metrics)
+                self.logger.info("Computed mode collapse metrics.")
+
+            # Compute Diversity Metrics
+            if self.compute_diversity_metrics:
+                diversity_metrics = self._compute_diversity_metrics(fake_features)
+                metrics.update(diversity_metrics)
+                self.logger.info("Computed diversity metrics.")
+
+            # Log metrics
+            for name, value in metrics.items():
+                pl_module.log(f"eval/{name}", value, sync_dist=True)
+
+            # Store in history
+            self.metrics_history["epoch"].append(trainer.current_epoch)
+            for metric_name, value in metrics.items():
+                if metric_name in self.metrics_history:
+                    self.metrics_history[metric_name].append(value)
+        except Exception as e:
+            self.logger.error(
+                f"[Evaluation Callback] Failed at epoch {trainer.current_epoch}: {e}"
             )
-            metrics["wasserstein_distance"] = wd
-            self.logger.info("Computed Wasserstein distance.")
-
-        # Compute MMD
-        if self.compute_mmd:
-            mmd = self._compute_mmd(
-                self.real_features_cache, fake_features, self.mmd_kernel
-            )
-            metrics["mmd"] = mmd
-            self.logger.info("Computed MMD.")
-
-        # Compute Coverage and Precision
-        if self.compute_coverage_precision:
-            coverage, precision = self._compute_coverage_precision(
-                self.real_features_cache, fake_features, self.k_nearest
-            )
-            metrics["coverage"] = coverage
-            metrics["precision"] = precision
-            self.logger.info("Computed coverage and precision.")
-
-        # Compute Jensen-Shannon Divergence
-        if self.compute_js_divergence:
-            js_div = self._compute_js_divergence(
-                self.real_features_cache, fake_features
-            )
-            metrics["js_divergence"] = js_div
-            self.logger.info("Computed JS divergence.")
-
-        # Compute Energy Distance
-        if self.compute_energy_distance:
-            energy_dist = self._compute_energy_distance(
-                self.real_features_cache, fake_features
-            )
-            metrics["energy_distance"] = energy_dist
-            self.logger.info("Computed energy distance.")
-
-        # Compute Density Consistency
-        if self.compute_density_consistency:
-            density_metrics = self._compute_density_consistency(
-                self.real_features_cache, fake_features
-            )
-            metrics.update(density_metrics)
-            self.logger.info("Computed density consistency.")
-
-        # Compute Mode Collapse Metrics
-        if self.compute_mode_collapse:
-            mode_metrics = self._compute_mode_collapse_metrics(fake_features)
-            metrics.update(mode_metrics)
-            self.logger.info("Computed mode collapse metrics.")
-
-        # Compute Diversity Metrics
-        if self.compute_diversity_metrics:
-            diversity_metrics = self._compute_diversity_metrics(fake_features)
-            metrics.update(diversity_metrics)
-            self.logger.info("Computed diversity metrics.")
-
-        # Log metrics
-        for name, value in metrics.items():
-            pl_module.log(f"eval/{name}", value, sync_dist=True)
-
-        # Store in history
-        self.metrics_history["epoch"].append(trainer.current_epoch)
-        for metric_name, value in metrics.items():
-            if metric_name in self.metrics_history:
-                self.metrics_history[metric_name].append(value)
 
     def get_metrics_history(self):
         """Return the complete metrics history"""

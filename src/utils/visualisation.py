@@ -400,7 +400,11 @@ def save_image_samples(samples: torch.Tensor, model_name: str, dataset: str):
     grid = torchvision.utils.make_grid(samples, nrow=4, padding=2)
 
     # Save image
-    torchvision.utils.save_image(grid, f"{model_name}_{dataset}_final_images.png")
+    root_dir = Path(__file__).resolve().parent.parent.parent
+    eval_dir = root_dir / "evaluation_plots"
+    eval_dir.mkdir(exist_ok=True)
+    save_file = eval_dir / f"{model_name}_{dataset}_final_images.png"
+    torchvision.utils.save_image(grid, save_file)
 
 
 def save_2d_samples(samples, X, tracker, model_name, dataset):
