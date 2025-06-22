@@ -1,6 +1,6 @@
 defaults:
-  - main: default
-  - model: flow_matching
+  - main: default_2d
+  - model: flow_matching_2d
   - logging: simple
   - _self_
   - override hydra/job_logging: colorlog

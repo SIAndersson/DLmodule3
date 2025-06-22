@@ -89,8 +89,9 @@ def load_huggingface_data(
     # Concatenate all batches into a single tensor
     all_tensors = torch.tensor(all_pixel_values)  # Final shape (N, C, H, W)
 
-    # Save tensor to ./data directory with appropriate filename using pathlib.Path
+    # Save tensor to ./data directory
     torch.save(all_tensors, save_path)
+    logger.info(f"Generated dataset saved to {save_path}.")
 
     logger.info(f"Min: {all_tensors.min()}, Max: {all_tensors.max()}")
     logger.debug(f"Final shape: {all_tensors.shape}")
