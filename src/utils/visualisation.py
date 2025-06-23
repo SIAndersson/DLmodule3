@@ -19,7 +19,7 @@ def plot_evaluation_metrics(
     model_type: str,
     figsize: Optional[Tuple[int, int]] = None,
     palette: str = "colorblind",
-    highlight_color: str = "red",
+    highlight_color: str = "yellow",
     save_path: Optional[str] = None,
     dpi: int = 300,
     show_best_values: bool = True,
