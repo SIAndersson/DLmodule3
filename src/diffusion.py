@@ -233,10 +233,12 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        val_metrics = self.run_evaluation()
-        for k, v in val_metrics.items():
-            self.log(f"eval/{k}", v, sync_dist=True, on_epoch=True)
-        self.val_metrics.append(val_metrics)
+        # Only run evaluation on the first batch (very intensive)
+        if batch_idx == 0:
+            val_metrics = self.run_evaluation()
+            for k, v in val_metrics.items():
+                self.log(f"eval/{k}", v, sync_dist=True, on_epoch=True)
+            self.val_metrics.append(val_metrics)
 
     def on_validation_epoch_end(self):
         if self.val_metrics and any(len(d) > 0 for d in self.val_metrics):
