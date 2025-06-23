@@ -454,8 +454,8 @@ class GenerativeModelEvaluator:
 
             # Add small diagonal for numerical stability
             eps = 1e-6
-            sigma_real += eps * torch.eye(sigma_real.shape[0], device=self.device)
-            sigma_fake += eps * torch.eye(sigma_fake.shape[0], device=self.device)
+            sigma_real += eps * torch.eye(sigma_real.shape[0], device=real_features.device)
+            sigma_fake += eps * torch.eye(sigma_fake.shape[0], device=fake_features.device)
 
             # Compute mean difference squared
             diff = mu_real - mu_fake
