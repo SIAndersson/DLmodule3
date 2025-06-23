@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torchvision.models as models
 import torchvision.transforms as transforms
 from dotenv import load_dotenv
-from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint, EarlyStopping
 from scipy.stats import entropy, kstest, wasserstein_distance
 
 load_dotenv()
@@ -641,3 +641,22 @@ def create_evaluation_config(
                 "k_nearest": 5,
                 "mmd_kernel": "rbf",
             }
+
+
+def create_model_checkpoint_callback(model_name, dataset_type):
+    os.makedirs(f"./model_checkpoints/{model_name}/{dataset_type}", exist_ok=True)
+    return ModelCheckpoint(
+        dirpath=f"./model_checkpoints/{model_name}/{dataset_type}",
+        filename="{epoch}-{train_loss:.2f}",
+        save_top_k=1,
+        monitor="train_loss",
+        mode="min",
+    )
+
+
+def create_early_stopping_callback(patience=20):
+    return EarlyStopping(
+        monitor="train_loss",
+        patience=patience,
+        mode="min",
+    )

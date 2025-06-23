@@ -1,16 +1,22 @@
 import logging
 from typing import Dict, Optional
-
+import os
 import hydra
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
 import torch.nn.functional as F
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.optim import AdamW
-
-from utils.callbacks import EvaluationMixin, MetricTracker, create_evaluation_config
+import numpy as np
+from utils.callbacks import (
+    EvaluationMixin,
+    MetricTracker,
+    create_evaluation_config,
+    create_model_checkpoint_callback,
+    create_early_stopping_callback,
+)
 from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
@@ -21,6 +27,7 @@ from utils.visualisation import (
     save_2d_samples,
     save_image_samples,
 )
+from pytorch_lightning.loggers import MLFlowLogger
 
 # Configure matplotlib for better aesthetics
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -354,7 +361,7 @@ def main(cfg: DictConfig):
     log.info("Initializing Flow Matching model...")
     # Initialize model
     eval_config = create_evaluation_config(
-        log, cfg, model_type="vector_field", evaluation_level="standard"
+        log, cfg, model_type="vector_field", evaluation_level=cfg.main.evaluation_level
     )
     model = FlowMatching(cfg.model, eval_config)
 
@@ -382,12 +389,35 @@ def main(cfg: DictConfig):
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
     tracker = MetricTracker()
+    model_checkpoint_callback = create_model_checkpoint_callback(
+        model_name="flow_matching", dataset_type=cfg.main.dataset.lower()
+    )
+    early_stopping_callback = create_early_stopping_callback(patience=20)
+
+    # Initialise MLFlowLogger (wanted to try this for a while so this is me indulging)
+    experiment_name = f"sweep_fm_{cfg.main.dataset.lower()}"
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))
+    )  # Go up to project root
+    mlruns_path = os.path.join(project_root, "mlruns")
+
+    # Ensure mlruns directory exists
+    os.makedirs(mlruns_path, exist_ok=True)
+    mlflow_logger = MLFlowLogger(
+        experiment_name=experiment_name,
+        tracking_uri=f"file:{mlruns_path}",
+        log_model=False,
+    )
+    # Log hyperparameters
+    mlflow_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        callbacks=[tracker],
+        logger=mlflow_logger,
+        callbacks=[tracker, early_stopping_callback],
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
@@ -398,35 +428,62 @@ def main(cfg: DictConfig):
     log.info(f"Train losses: {tracker.train_losses}")
 
     # Generate samples
-    log.info("Generating samples...")
-    if (
-        cfg.main.dataset.lower() == "two_moons"
-        or cfg.main.dataset.lower() == "2d_gaussians"
-    ):
-        samples = model.sample(num_samples=2000)
+    if cfg.main.visualization:
+        log.info("Generating samples...")
+        if (
+            cfg.main.dataset.lower() == "two_moons"
+            or cfg.main.dataset.lower() == "2d_gaussians"
+        ):
+            samples = model.sample(num_samples=2000)
 
-        X = X_train.cpu().numpy()  # Move original data to CPU for plotting
-        samples = samples.cpu().numpy()  # Move generated samples to CPU for plotting
+            X = X_train.cpu().numpy()  # Move original data to CPU for plotting
+            samples = (
+                samples.cpu().numpy()
+            )  # Move generated samples to CPU for plotting
 
-        save_2d_samples(samples, X, tracker, "flow_matching", cfg.main.dataset.lower())
-    else:
-        final_samples = model.sample(num_samples=16)
+            save_2d_samples(
+                samples, X, tracker, "flow_matching", cfg.main.dataset.lower()
+            )
+        else:
+            final_samples = model.sample(num_samples=16)
 
-        # Save generated samples
-        save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
-        plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
+            # Save generated samples
+            save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
+            plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
 
     metrics_history = model.get_metrics_history()
-    fig = plot_evaluation_metrics(
-        metrics_history,
-        "vector_field",
-        save_path=f"flow_matching_{cfg.main.dataset}_metrics.png",
-    )
-    plt.close()
+    if cfg.main.visualization:
+        fig = plot_evaluation_metrics(
+            metrics_history,
+            "vector_field",
+            save_path=f"flow_matching_{cfg.main.dataset}_metrics.png",
+        )
+        plt.close()
 
     # Get summary table
     summary_df = create_metrics_summary_table(metrics_history)
     print(summary_df)
+
+    # First check that we don't have inf or NaN
+    final_train_loss = tracker.train_losses[-1]
+    final_coverage = metrics_history["coverage"][-1]
+    if not np.isfinite(final_train_loss) or not np.isfinite(final_coverage):
+        last_finite_train_idx = np.where(np.isfinite(tracker.train_losses))[0][-1]
+        last_finite_coverage_idx = np.where(np.isfinite(metrics_history["coverage"]))[
+            0
+        ][-1]
+        final_train_loss = tracker.train_losses[last_finite_train_idx]
+        final_coverage = metrics_history["coverage"][last_finite_coverage_idx]
+
+    mlflow_logger.experiment.log_metric(
+        mlflow_logger.run_id, "final_train_loss", final_train_loss
+    )
+    mlflow_logger.experiment.log_metric(
+        mlflow_logger.run_id, "final_coverage", final_coverage
+    )
+
+    # Return train loss and eval/coverage
+    return final_train_loss, final_coverage
 
 
 if __name__ == "__main__":

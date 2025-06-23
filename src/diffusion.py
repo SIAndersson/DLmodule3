@@ -1,5 +1,6 @@
 import logging
 from typing import Dict
+import os
 
 import hydra
 import matplotlib.pyplot as plt
@@ -7,10 +8,17 @@ import pytorch_lightning as pl
 import seaborn as sns
 import torch
 import torch.nn.functional as F
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.optim import AdamW
+import numpy as np
 
-from utils.callbacks import EvaluationMixin, MetricTracker, create_evaluation_config
+from utils.callbacks import (
+    EvaluationMixin,
+    MetricTracker,
+    create_evaluation_config,
+    create_model_checkpoint_callback,
+    create_early_stopping_callback,
+)
 from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
 from utils.seeding import set_seed
@@ -22,6 +30,8 @@ from utils.visualisation import (
     save_image_samples,
     visualize_diffusion_process,
 )
+from pytorch_lightning.loggers import MLFlowLogger
+
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
@@ -420,7 +430,7 @@ def main(cfg: DictConfig):
     # Initialize model
     log.info("Initializing diffusion model...")
     eval_config = create_evaluation_config(
-        log, cfg, model_type="diffusion", evaluation_level="standard"
+        log, cfg, model_type="diffusion", evaluation_level=cfg.main.evaluation_level
     )
     model = DiffusionModel(cfg.model, eval_config)
 
@@ -441,12 +451,35 @@ def main(cfg: DictConfig):
     # Train model
     log.info("Training model...")
     tracker = MetricTracker()
+    model_checkpoint_callback = create_model_checkpoint_callback(
+        model_name="diffusion", dataset_type=cfg.main.dataset.lower()
+    )
+    early_stopping_callback = create_early_stopping_callback(patience=20)
+
+    # Initialise MLFlowLogger (wanted to try this for a while so this is me indulging)
+    experiment_name = f"sweep_diffusion_{cfg.main.dataset.lower()}"
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))
+    )  # Go up to project root
+    mlruns_path = os.path.join(project_root, "mlruns")
+
+    # Ensure mlruns directory exists
+    os.makedirs(mlruns_path, exist_ok=True)
+    mlflow_logger = MLFlowLogger(
+        experiment_name=experiment_name,
+        tracking_uri=f"file:{mlruns_path}",
+        log_model=False,
+    )
+    # Log hyperparameters
+    mlflow_logger.log_hyperparams(OmegaConf.to_container(cfg, resolve=True))
+
     trainer = pl.Trainer(
         max_epochs=cfg.main.max_epochs,
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        callbacks=[tracker],
+        callbacks=[tracker, early_stopping_callback],
+        logger=mlflow_logger,
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
@@ -461,49 +494,63 @@ def main(cfg: DictConfig):
     model.eval()
     device = next(model.parameters()).device
 
-    if (
-        cfg.main.dataset.lower() == "two_moons"
-        or cfg.main.dataset.lower() == "2d_gaussians"
-    ):
-        generated_samples = model.sample((2000, 2), device)
+    if cfg.main.visualization:
+        if (
+            cfg.main.dataset.lower() == "two_moons"
+            or cfg.main.dataset.lower() == "2d_gaussians"
+        ):
+            generated_samples = model.sample((2000, 2), device)
 
-        X = data.cpu().numpy()  # Move original data to CPU for plotting
-        samples = (
-            generated_samples.cpu().numpy()
-        )  # Move generated samples to CPU for plotting
+            X = data.cpu().numpy()  # Move original data to CPU for plotting
+            samples = (
+                generated_samples.cpu().numpy()
+            )  # Move generated samples to CPU for plotting
 
-        save_2d_samples(samples, X, tracker, "diffusion", cfg.main.dataset.lower())
+            save_2d_samples(samples, X, tracker, "diffusion", cfg.main.dataset.lower())
 
-        visualize_diffusion_process(model, generated_samples)
-    else:
-        # Use DDIM sampler for large dataset so it doesn't take a million years
-        final_samples = model.ddim_sample((16, 3, 256, 256), device)
+            visualize_diffusion_process(model, generated_samples)
+        else:
+            # Use DDIM sampler for large dataset so it doesn't take a million years
+            final_samples = model.ddim_sample((16, 3, 256, 256), device)
 
-        # Save generated samples
-        save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
-        plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
+            # Save generated samples
+            save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
+            plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
 
     metrics_history = model.get_metrics_history()
-    fig = plot_evaluation_metrics(
-        metrics_history,
-        "diffusion",
-        save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.png",
-    )
-    plt.close()
+    if cfg.main.visualization:
+        fig = plot_evaluation_metrics(
+            metrics_history,
+            "diffusion",
+            save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.png",
+        )
+        plt.close()
+
     # Get summary table
     summary_df = create_metrics_summary_table(metrics_history)
     print(summary_df)
 
+    # First check that we don't have inf or NaN
+    final_train_loss = tracker.train_losses[-1]
+    final_coverage = metrics_history["coverage"][-1]
+    if not np.isfinite(final_train_loss) or not np.isfinite(final_coverage):
+        last_finite_train_idx = np.where(np.isfinite(tracker.train_losses))[0][-1]
+        last_finite_coverage_idx = np.where(np.isfinite(metrics_history["coverage"]))[
+            0
+        ][-1]
+        final_train_loss = tracker.train_losses[last_finite_train_idx]
+        final_coverage = metrics_history["coverage"][last_finite_coverage_idx]
+
+    mlflow_logger.experiment.log_metric(
+        mlflow_logger.run_id, "final_train_loss", final_train_loss
+    )
+    mlflow_logger.experiment.log_metric(
+        mlflow_logger.run_id, "final_coverage", final_coverage
+    )
+
+    # Return train loss and eval/coverage
+    return final_train_loss, final_coverage
+
 
 if __name__ == "__main__":
-    """
-    Main execution: train the diffusion model and visualize results
-
-    This implementation demonstrates:
-    1. Forward diffusion q(x_t | x_0) with cosine noise schedule
-    2. Reverse diffusion p_θ(x_{t-1} | x_t) using a simple U-Net
-    3. Training with the simplified denoising objective
-    4. Sample generation through iterative denoising
-    5. Visualization of original vs generated distributions
-    """
     main()

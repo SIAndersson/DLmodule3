@@ -3,7 +3,13 @@ defaults:
   - model: flow_matching_2d
   - logging: simple
   - _self_
+  - override hydra/sweeper: optuna
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
 log_dir: ${hydra:runtime.cwd}/logs/${now:%Y-%m-%d_%H-%M-%S}
+
+# Hydra configuration
+hydra:
+  job:
+    chdir: true # Change to output directory for each run

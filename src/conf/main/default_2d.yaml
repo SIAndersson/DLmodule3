@@ -6,3 +6,5 @@ num_samples: 10000
 dataset: "two_moons"
 test: true
 val_size: 0.1
+evaluation_level: "minimal"
+visualization: true
