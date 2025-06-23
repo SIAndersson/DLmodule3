@@ -1,7 +1,12 @@
 import mlflow
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Plot hyperparameter sweep results")
+    parser.add_argument("--experiment-name", type=str, required=True, help="Name of the experiment")
+    return parser.parse_args()
 
 def is_pareto_efficient(costs):
     """
@@ -93,7 +98,8 @@ def get_hyperparameters_of_best_run(
 
 
 if __name__ == "__main__":
-    experiment_name = "sweep_fm_two_moons"
+    args = parse_args()
+    experiment_name = args.experiment_name
     metric_names = ["final_train_loss", "final_coverage"]
 
     pareto_front = get_pareto_front(experiment_name, metric_names)

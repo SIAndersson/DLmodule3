@@ -180,7 +180,7 @@ class GenerativeModelEvaluator:
                     if self.model_type == "vector_field":
                         samples = model.fast_sample(current_batch_size, device)
                     elif self.model_type == "diffusion":
-                        samples = model.ddim_sample((current_batch_size, 2), device)
+                        samples = model.ddim_sample((current_batch_size, 2), device, num_inference_steps=100)
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
                 else:  # image
@@ -573,7 +573,7 @@ def create_evaluation_config(
             "compute_energy_distance": False,
             "compute_density_consistency": False,
             "compute_mode_collapse": True,  # Important for generative models
-            "compute_diversity_metrics": False,
+            "compute_diversity_metrics": True,
             "k_nearest": 5,
             "mmd_kernel": "rbf",
         }
