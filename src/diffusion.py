@@ -491,6 +491,7 @@ def main(cfg: DictConfig):
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
         accumulate_grad_batches=gradient_accumulation,
+        num_sanity_val_steps=0
     )
     trainer.fit(model, datamodule)
     log.info("Training complete.")
