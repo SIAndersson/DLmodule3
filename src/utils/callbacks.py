@@ -633,7 +633,7 @@ def create_evaluation_config(
             "logger": log,
             "model_type": model_type,
             "dataset_type": data_type,
-            "eval_every_n_epochs": 5,
+            "eval_every_n_epochs": 10 if data_type == "image" else 5,
             "num_samples": 500,
             "feature_extractor": "mobilenet" if data_type == "image" else None,
             "cache_dir": "./weights",
@@ -645,7 +645,7 @@ def create_evaluation_config(
             "compute_density_consistency": False,
             "compute_mode_collapse": True,  # Important for generative models
             "compute_diversity_metrics": True,
-            "compute_fid": False,
+            "compute_fid": True if data_type == "image" else False,
             "k_nearest": 5,
             "mmd_kernel": "rbf",
         }

@@ -540,24 +540,24 @@ def main(cfg: DictConfig):
 
     # First check that we don't have inf or NaN
     final_train_loss = tracker.train_losses[-1]
-    final_mmd = metrics_history["mmd"][-1]
-    if not np.isfinite(final_train_loss) or not np.isfinite(final_mmd):
+    final_fid = metrics_history["fid"][-1]
+    if not np.isfinite(final_train_loss) or not np.isfinite(final_fid):
         last_finite_train_idx = np.where(np.isfinite(tracker.train_losses))[0][-1]
-        last_finite_mmd_idx = np.where(np.isfinite(metrics_history["mmd"]))[
+        last_finite_fid_idx = np.where(np.isfinite(metrics_history["fid"]))[
             0
         ][-1]
         final_train_loss = tracker.train_losses[last_finite_train_idx]
-        final_mmd = metrics_history["mmd"][last_finite_mmd_idx]
+        final_fid = metrics_history["fid"][last_finite_fid_idx]
 
     mlflow_logger.experiment.log_metric(
         mlflow_logger.run_id, "final_train_loss", final_train_loss
     )
     mlflow_logger.experiment.log_metric(
-        mlflow_logger.run_id, "final_mmd", final_mmd
+        mlflow_logger.run_id, "final_fid", final_fid
     )
 
     # Return train loss and eval/coverage
-    return final_train_loss, final_mmd
+    return final_train_loss, final_fid
 
 
 if __name__ == "__main__":

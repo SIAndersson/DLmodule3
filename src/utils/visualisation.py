@@ -277,6 +277,7 @@ def create_metrics_summary_table(metrics_history: Dict) -> pd.DataFrame:
                 or "ks_stat" in metric
                 or "ratio" in metric
                 or "mmd" in metric
+                or "fid" in metric
                 else values_array.max(),
                 "Mean": values_array.mean(),
                 "Std": values_array.std(),
