@@ -40,6 +40,7 @@ class GenerativeModelEvaluator:
         compute_density_consistency=True,
         compute_mode_collapse=True,
         compute_diversity_metrics=True,
+        compute_fid=True,  # Lightweight FID for image datasets
         k_nearest=5,  # for coverage/precision
         mmd_kernel="rbf",  # 'rbf' or 'polynomial'
     ):
@@ -60,6 +61,7 @@ class GenerativeModelEvaluator:
         self.compute_density_consistency = compute_density_consistency
         self.compute_mode_collapse = compute_mode_collapse
         self.compute_diversity_metrics = compute_diversity_metrics
+        self.compute_fid = compute_fid
         self.k_nearest = k_nearest
         self.mmd_kernel = mmd_kernel
 
@@ -72,7 +74,7 @@ class GenerativeModelEvaluator:
         if not self.feature_extractor_name or self.dataset_type == "2d":
             return
 
-        if self.feature_extractor_name == "mobilenet":
+        if self.compute_fid or self.feature_extractor_name == "mobilenet":
             os.environ["TORCH_HOME"] = str(self.cache_dir)
             model = models.mobilenet_v2(pretrained=True)
             self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
@@ -430,6 +432,67 @@ class GenerativeModelEvaluator:
             "distance_entropy": distance_entropy,
         }
 
+    def _compute_fid(self, real_features, fake_features):
+            """
+            Compute Fréchet Inception Distance (FID) using GPU operations.
+            FID measures the distance between two multivariate Gaussians.
+            """
+            # Ensure we have enough samples for stable statistics
+            if len(real_features) < 10 or len(fake_features) < 10:
+                return float('inf')
+
+            # Compute means
+            mu_real = torch.mean(real_features, dim=0)
+            mu_fake = torch.mean(fake_features, dim=0)
+
+            # Compute covariance matrices
+            real_centered = real_features - mu_real
+            fake_centered = fake_features - mu_fake
+
+            sigma_real = torch.matmul(real_centered.t(), real_centered) / (len(real_features) - 1)
+            sigma_fake = torch.matmul(fake_centered.t(), fake_centered) / (len(fake_features) - 1)
+
+            # Add small diagonal for numerical stability
+            eps = 1e-6
+            sigma_real += eps * torch.eye(sigma_real.shape[0], device=self.device)
+            sigma_fake += eps * torch.eye(sigma_fake.shape[0], device=self.device)
+
+            # Compute mean difference squared
+            diff = mu_real - mu_fake
+            mean_diff_sq = torch.dot(diff, diff)
+
+            # Compute trace of covariances
+            tr_sigma_real = torch.trace(sigma_real)
+            tr_sigma_fake = torch.trace(sigma_fake)
+
+            # Compute sqrt(sigma_real @ sigma_fake) using eigendecomposition
+            # This is more stable than direct matrix square root
+            try:
+                # Compute sigma_real^(1/2) @ sigma_fake @ sigma_real^(1/2)
+                eigenvals_real, eigenvecs_real = torch.linalg.eigh(sigma_real)
+                eigenvals_real = torch.clamp(eigenvals_real, min=eps)  # Ensure positive
+
+                sqrt_sigma_real = eigenvecs_real @ torch.diag(torch.sqrt(eigenvals_real)) @ eigenvecs_real.t()
+
+                # Compute sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
+                middle_matrix = sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
+                eigenvals_middle, _ = torch.linalg.eigh(middle_matrix)
+                eigenvals_middle = torch.clamp(eigenvals_middle, min=0)  # Ensure non-negative
+
+                tr_sqrt_product = torch.sum(torch.sqrt(eigenvals_middle))
+
+            except Exception as e:
+                # Fallback to approximation if eigendecomposition fails
+                self.logger.warning(f"FID computation failed with eigendecomposition: {e}")
+                # Use Frobenius norm approximation: ||A||_F ≈ sqrt(tr(A^T A))
+                product_approx = torch.matmul(sigma_real, sigma_fake)
+                tr_sqrt_product = torch.sqrt(torch.trace(product_approx) + eps)
+
+            # Compute FID
+            fid = mean_diff_sq + tr_sigma_real + tr_sigma_fake - 2 * tr_sqrt_product
+
+            return fid.item()
+
     def evaluate(self, model, device):
         """Run evaluation at the end of train epoch"""
         if self.real_features_cache is None:
@@ -443,6 +506,14 @@ class GenerativeModelEvaluator:
         metrics = {}
 
         self.logger.debug("Computing metrics...")
+
+        # Compute FID
+        if self.compute_fid:
+            fid = self._compute_fid(
+                self.real_features_cache, fake_features
+            )
+            metrics["fid"] = fid
+            self.logger.debug("Computed FID.")
 
         # Compute Wasserstein distance
         if self.compute_wasserstein:
@@ -574,6 +645,7 @@ def create_evaluation_config(
             "compute_density_consistency": False,
             "compute_mode_collapse": True,  # Important for generative models
             "compute_diversity_metrics": True,
+            "compute_fid": False,
             "k_nearest": 5,
             "mmd_kernel": "rbf",
         }
@@ -596,6 +668,7 @@ def create_evaluation_config(
             "compute_density_consistency": True,
             "compute_mode_collapse": True,
             "compute_diversity_metrics": True,
+            "compute_fid": True if data_type == "image" else False,
             "k_nearest": 5,
             "mmd_kernel": "rbf",
         }
@@ -618,6 +691,7 @@ def create_evaluation_config(
                 "compute_density_consistency": True,
                 "compute_mode_collapse": True,
                 "compute_diversity_metrics": True,
+                "compute_fid": False, # Expensive
                 "k_nearest": 5,
                 "mmd_kernel": "rbf",
             }
@@ -638,6 +712,7 @@ def create_evaluation_config(
                 "compute_density_consistency": True,
                 "compute_mode_collapse": True,
                 "compute_diversity_metrics": True,
+                "compute_fid": False,
                 "k_nearest": 5,
                 "mmd_kernel": "rbf",
             }

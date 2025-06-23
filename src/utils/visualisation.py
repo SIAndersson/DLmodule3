@@ -60,6 +60,7 @@ def plot_evaluation_metrics(
                 "energy_distance",
                 "spectral_divergence",
                 "density_ks_stat",
+                "fid",
             ],
             "better": "lower",
             "title": "Distance Metrics (Lower is Better)",

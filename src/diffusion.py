@@ -85,6 +85,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         # Store metrics history
         self.metrics_history = {
             "epoch": [],
+            "fid": [],
             "wasserstein_distance": [],
             "mmd": [],
             "coverage": [],
