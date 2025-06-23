@@ -367,6 +367,10 @@ def main(cfg: DictConfig):
 
     # Create sample data
     log.info("Setting up dataset...")
+    if cfg.main.gradient_accumulation:
+        gradient_accumulation = cfg.main.batch_size // 32
+    else:
+        gradient_accumulation = 1
     datamodule = GenerativeDataModule(cfg, log)
     datamodule.prepare_data()
     datamodule.setup(stage="fit")
@@ -392,7 +396,7 @@ def main(cfg: DictConfig):
     model_checkpoint_callback = create_model_checkpoint_callback(
         model_name="flow_matching", dataset_type=cfg.main.dataset.lower()
     )
-    early_stopping_callback = create_early_stopping_callback(patience=20)
+    early_stopping_callback = create_early_stopping_callback(patience=50)
 
     # Initialise MLFlowLogger (wanted to try this for a while so this is me indulging)
     experiment_name = f"sweep_fm_{cfg.main.dataset.lower()}"
@@ -421,6 +425,7 @@ def main(cfg: DictConfig):
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
+        accumulate_grad_batches=gradient_accumulation,
     )
     trainer.fit(model, datamodule)
     log.info("Training complete.")

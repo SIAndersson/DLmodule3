@@ -422,6 +422,10 @@ def main(cfg: DictConfig):
     set_seed(cfg.main.seed)
 
     # Create dataset
+    if cfg.main.gradient_accumulation:
+        gradient_accumulation = cfg.main.batch_size // 32
+    else:
+        gradient_accumulation = 1
     datamodule = GenerativeDataModule(cfg, log)
     datamodule.prepare_data()
     datamodule.setup(stage="fit")
@@ -454,7 +458,7 @@ def main(cfg: DictConfig):
     model_checkpoint_callback = create_model_checkpoint_callback(
         model_name="diffusion", dataset_type=cfg.main.dataset.lower()
     )
-    early_stopping_callback = create_early_stopping_callback(patience=20)
+    early_stopping_callback = create_early_stopping_callback(patience=50)
 
     # Initialise MLFlowLogger (wanted to try this for a while so this is me indulging)
     experiment_name = f"sweep_diffusion_{cfg.main.dataset.lower()}"
@@ -483,6 +487,7 @@ def main(cfg: DictConfig):
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
+        accumulate_grad_batches=gradient_accumulation,
     )
     trainer.fit(model, datamodule)
     log.info("Training complete.")
@@ -532,24 +537,24 @@ def main(cfg: DictConfig):
 
     # First check that we don't have inf or NaN
     final_train_loss = tracker.train_losses[-1]
-    final_coverage = metrics_history["coverage"][-1]
-    if not np.isfinite(final_train_loss) or not np.isfinite(final_coverage):
+    final_mmd = metrics_history["mmd"][-1]
+    if not np.isfinite(final_train_loss) or not np.isfinite(final_mmd):
         last_finite_train_idx = np.where(np.isfinite(tracker.train_losses))[0][-1]
-        last_finite_coverage_idx = np.where(np.isfinite(metrics_history["coverage"]))[
+        last_finite_mmd_idx = np.where(np.isfinite(metrics_history["mmd"]))[
             0
         ][-1]
         final_train_loss = tracker.train_losses[last_finite_train_idx]
-        final_coverage = metrics_history["coverage"][last_finite_coverage_idx]
+        final_mmd = metrics_history["mmd"][last_finite_mmd_idx]
 
     mlflow_logger.experiment.log_metric(
         mlflow_logger.run_id, "final_train_loss", final_train_loss
     )
     mlflow_logger.experiment.log_metric(
-        mlflow_logger.run_id, "final_coverage", final_coverage
+        mlflow_logger.run_id, "final_mmd", final_mmd
     )
 
     # Return train loss and eval/coverage
-    return final_train_loss, final_coverage
+    return final_train_loss, final_mmd
 
 
 if __name__ == "__main__":
