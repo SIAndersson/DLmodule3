@@ -431,8 +431,13 @@ def main(cfg: DictConfig):
         accumulate_grad_batches=gradient_accumulation,
         num_sanity_val_steps=0
     )
-    trainer.fit(model, datamodule)
-    log.info("Training complete.")
+    try:
+        trainer.fit(model, datamodule)
+        log.info("Training complete.")
+    # Most likely fails due to Cuda OOM, return high values for loss and metric
+    except Exception as e:
+        log.error(f"Training failed: {e}")
+        return 1e10, 1e10
 
     log.info(f"Train losses: {tracker.train_losses}")
 
