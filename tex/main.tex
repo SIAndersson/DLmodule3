@@ -2,8 +2,6 @@
 \usepackage{graphicx} % Required for inserting images
 
 \title{Blank}
-\author{Sebastian Andersson}
-\author{Lo Heander}
 \author{Sebastian Andersson \and Lo Heander \and Andreas Bexell}
 \date{June 2025}
 
@@ -24,11 +22,13 @@ We choose the Flow matching and Diffusion model families.
 The process of training a diffusion models works by incrementally adding normally distributed noise to data, until the original data is entirely obscured by noise.
 The model learns to reverse the noise addition in each step. Ultimately, this enables the model to generate new data from noise.
 
-\paragraph{Denoising diffusion probabalistic models}
 
-\paragraph{Score-based generative models}
 
-\paragraph{Stochastic differential equations}
+\paragraph{Denoising diffusion probabalistic models} Adds gaussian noise in many, typically more than 1000 discreete steps. The process is to train a neural network to remove noise in each step.
+
+\paragraph{Score-based generative models} estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determine the direction of ``less noise''. The model trains to minimize the loss over several noise levels, and uses the score function to to simulate differential equations that can apply the noise in reverse, that is, to remove the noise.
+
+\paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and 
 
 
 
