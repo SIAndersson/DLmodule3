@@ -21,23 +21,26 @@
 
 \section{Introduction}
 
-We choose the Flow matching and Diffusion model families. 
+For this project, we choose to implement and evaluate flow matching and diffusion model families. These model families are particularily interesting to compare since they can both be used for image generation and be trained on the same datasets making direct performance and result comparisons possible. Their internal neural network architectures are also similar, but they use very different loss functions and strategies for training the networks. Because of this, we expect both strong similarities in for example network complexity, training time and accuracy, but also interesting differences in the resulting data generated from the same inputs.
 
 \section{Model Families}
 
-\subsection{Flow matching}
+\subsection{Flow Matching}
 
 \subsection{Diffusion}
 
-Diffusion models is a type of deep generative models that has found many applications recently, especially for image generation. The models are based on two diffusion stages. In the \emph{forward diffusion stage}, normally distributed noise is incrementally added to the training data, until the original data is entirely obscured by noise. In the next stage, \emph{reverse diffusion stage}, the model is trained to recover the original data from the noisy data at each step. Ultimately, this enables the model to generate new data from pure noise. If conditioned with an additional label or prompt, that can be used to enable generation of data from a combination of noise and instruction.
+Diffusion models is a type of deep generative models that has found many applications recently, especially for image generation. The models are based on two diffusion stages. In the \emph{forward diffusion stage}, normally distributed noise is incrementally added to the training data, until the original data is entirely obscured by noise. In the next stage, the \emph{reverse diffusion stage}, the model is trained to recover the original data from the noisy data at each step. Ultimately, this enables the model to generate new data from pure noise. If conditioned with an additional label or prompt during training, the model can become able to generate data from a combination of noise and instruction.
 
-Croitoru et al.~\cite{croitoru2023diffusion} conducts a survey on how diffision models apply to computer vision use-cases.
+Croitoru et al. conducts a survey on how diffision models apply to computer vision use-cases~\cite{croitoru2023diffusion}. To start with, they outline three main categories of diffusion models:
 
-\paragraph{Denoising diffusion probabalistic models} Adds gaussian noise in many, typically more than 1000 discreete steps. The process is to train a neural network to remove noise in each step.
+\paragraph{Denoising Diffusion Probabalistic Models (DDPMs)} 
+DDPMs model a probability distribution of the applied noise in the latent space of the neural model. DDPMs typically require many, in the order of 1000 or more, discrete steps when adding the noise. It uses a stochastic sampling strategy that, while requiring many steps, can lead to more diverse outputs. They are very flexible and can be optimized using a variety of different noise schedules and loss functions.
 
-\paragraph{Score-based generative models} estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determine the direction of ``less noise''. The model trains to minimize the loss over several noise levels, and uses the score function to to simulate differential equations that can apply the noise in reverse, that is, to remove the noise.
+\paragraph{Noise Conditioned Score Networks (NCSNs)} 
+Estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determine the direction of ``less noise''. The model trains to minimize the loss over several noise levels, and uses the score function to to simulate differential equations that can apply the noise in reverse, that is, to remove the noise.
 
-\paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and 
+\paragraph{Stochastic differential equations (SDEs)} 
+Model diffusion as a continuous time model and can be seen as a generalization combining both DDPMs and NCSNs.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
