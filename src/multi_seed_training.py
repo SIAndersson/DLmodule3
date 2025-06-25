@@ -29,7 +29,7 @@ def save_multi_seed_2d_samples(
     model_name: str, 
     dataset: str,
     seeds: List[int],
-    extra_nameL: str,
+    extra_name: str,
 ):
     """
     Plot results for multiple seeds with different colors.
@@ -52,7 +52,7 @@ def save_multi_seed_2d_samples(
     sns.scatterplot(
         x=X[:, 0], y=X[:, 1], 
         alpha=0.6, s=20, ax=ax1, 
-        color='black', label='Original'
+        color='grey', label='Original'
     )
     ax1.set_title("Original Data")
     ax1.set_xlabel("X₁")
@@ -66,7 +66,7 @@ def save_multi_seed_2d_samples(
         
         sns.scatterplot(
             x=samples[:, 0], y=samples[:, 1], 
-            alpha=0.6, s=20, ax=ax2, 
+            alpha=0.3, s=20, ax=ax2, 
             color=color, label=f'Seed {seed}'
         )
     
@@ -97,9 +97,9 @@ def save_multi_seed_2d_samples(
     # Comparison plot with original data and all generated samples
     sns.scatterplot(
         x=X[:, 0], y=X[:, 1],
-        alpha=0.4, s=15,
+        alpha=0.6, s=15,
         label="Original",
-        color='black',
+        color='grey',
         ax=ax4,
     )
     
@@ -109,7 +109,7 @@ def save_multi_seed_2d_samples(
         
         sns.scatterplot(
             x=samples[:, 0], y=samples[:, 1],
-            alpha=0.4, s=15,
+            alpha=0.3, s=15,
             label=f"Generated (Seed {seed})",
             color=color,
             ax=ax4,
@@ -124,9 +124,9 @@ def save_multi_seed_2d_samples(
     plt.tight_layout()
     
     # Save the plot
-    root_dir = Path(__file__).resolve().parent.parent.parent
-    eval_dir = root_dir / "evaluation_plots"
-    eval_dir.mkdir(exist_ok=True)
+    root_dir = Path(__file__).resolve().parent.parent
+    eval_dir = root_dir / "multi_seed_results" / "evaluation_plots"
+    eval_dir.mkdir(parents=True, exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_multi_seed_results_{extra_name}.png"
     plt.savefig(save_file, dpi=300, bbox_inches="tight")
     plt.show()
@@ -182,9 +182,9 @@ def save_seed_comparison_metrics(
     plt.tight_layout()
     
     # Save the plot
-    root_dir = Path(__file__).resolve().parent.parent.parent
-    eval_dir = root_dir / "evaluation_plots"
-    eval_dir.mkdir(exist_ok=True)
+    root_dir = Path(__file__).resolve().parent.parent
+    eval_dir = root_dir / "multi_seed_results" / "evaluation_plots"
+    eval_dir.mkdir(parents=True, exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_metrics_comparison_{extra_name}.png"
     plt.savefig(save_file, dpi=300, bbox_inches="tight")
     plt.show()
@@ -273,15 +273,16 @@ def train_single_seed(cfg: DictConfig, seed: int, extra_name: str) -> Tuple[torc
         if cfg.model.generative_model == "flow_matching":
             best_model = FlowMatching.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
-        )
+            )
+            final_samples = model.sample(num_samples=2000)
         elif cfg.model.generative_model == "diffusion":
             best_model = DiffusionModel.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
-        )
+            )
+            final_samples = model.sample((2000, 2), device)
         
         # Generate samples
-        final_samples = best_model.sample(num_samples=2000)
-        metrics_history = best_model.get_metrics_history()
+        metrics_history = model.get_metrics_history()
         
         # Calculate final metrics
         final_train_loss = tracker.train_losses[-1]
@@ -309,7 +310,7 @@ def main_multi_seed(cfg: DictConfig):
     Main function to train with multiple seeds and create visualizations.
     """
     # Define seeds to use
-    seeds = cfg.main.get('seeds', [10, 42, 123, 456, 789])  # Default seeds
+    seeds = cfg.main.get('seeds', [666, 123, 42, 10, 7])  # Default seeds, reversing bc 10 is the only one that works for default flow matching so we want it visible in visualization
     extra_name = cfg.main.get('extra_name', "default")
     
     log.info(f"Training Flow Matching model with seeds: {seeds}")
@@ -363,9 +364,9 @@ def main_multi_seed(cfg: DictConfig):
         'config': OmegaConf.to_container(cfg, resolve=True)
     }
     
-    root_dir = Path(__file__).resolve().parent.parent.parent
+    root_dir = Path(__file__).resolve().parent.parent
     results_dir = root_dir / "multi_seed_results"
-    results_dir.mkdir(exist_ok=True)
+    results_dir.mkdir(parents=True, exist_ok=True)
     
     results_file = results_dir / f"{cfg.model.generative_model}_{cfg.main.dataset.lower()}_multi_seed_results_{extra_name}.pkl"
     with open(results_file, 'wb') as f:

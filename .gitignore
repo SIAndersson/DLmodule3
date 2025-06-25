@@ -216,6 +216,7 @@ weights/
 evaluation_plots/
 model_checkpoints/
 checkpoints/
+multi_seed_results/
 
 # Tex stuff
 *.acn
