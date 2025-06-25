@@ -1,5 +1,6 @@
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
+\usepackage[numbers]{natbib} % Numeric references
 
 \title{Blank}
 \author{Sebastian Andersson \and Lo Heander \and Andreas Bexell}
@@ -22,7 +23,7 @@ We choose the Flow matching and Diffusion model families.
 The process of training a diffusion models works by incrementally adding normally distributed noise to data, until the original data is entirely obscured by noise.
 The model learns to reverse the noise addition in each step. Ultimately, this enables the model to generate new data from noise.
 
-
+Croitoru et al.~\cite{croitoru2023diffusion} details how diffision models apply to computer vision use-cases.
 
 \paragraph{Denoising diffusion probabalistic models} Adds gaussian noise in many, typically more than 1000 discreete steps. The process is to train a neural network to remove noise in each step.
 
@@ -30,6 +31,7 @@ The model learns to reverse the noise addition in each step. Ultimately, this en
 
 \paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and 
 
-
+\bibliographystyle{plainnat}
+\bibliography{references}
 
 \end{document}
