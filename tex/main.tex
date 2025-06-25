@@ -29,10 +29,9 @@ We choose the Flow matching and Diffusion model families.
 
 \subsection{Diffusion}
 
-The process of training a diffusion models works by incrementally adding normally distributed noise to data, until the original data is entirely obscured by noise.
-The model learns to reverse the noise addition in each step. Ultimately, this enables the model to generate new data from noise.
+Diffusion models is a type of deep generative models that has found many applications recently, especially for image generation. The models are based on two diffusion stages. In the \emph{forward diffusion stage}, normally distributed noise is incrementally added to the training data, until the original data is entirely obscured by noise. In the next stage, \emph{reverse diffusion stage}, the model is trained to recover the original data from the noisy data at each step. Ultimately, this enables the model to generate new data from pure noise. If conditioned with an additional label or prompt, that can be used to enable generation of data from a combination of noise and instruction.
 
-Croitoru et al.~\cite{croitoru2023diffusion} details how diffision models apply to computer vision use-cases.
+Croitoru et al.~\cite{croitoru2023diffusion} conducts a survey on how diffision models apply to computer vision use-cases.
 
 \paragraph{Denoising diffusion probabalistic models} Adds gaussian noise in many, typically more than 1000 discreete steps. The process is to train a neural network to remove noise in each step.
 
