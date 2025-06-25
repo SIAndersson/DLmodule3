@@ -1,21 +1,24 @@
 import logging
-from typing import Dict, Optional
 import os
+from typing import Dict, Optional
+
 import hydra
 import matplotlib.pyplot as plt
+import numpy as np
 import pytorch_lightning as pl
 import seaborn as sns
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.loggers import MLFlowLogger
 from torch.optim import AdamW
-import numpy as np
+
 from utils.callbacks import (
     EvaluationMixin,
     MetricTracker,
+    create_early_stopping_callback,
     create_evaluation_config,
     create_model_checkpoint_callback,
-    create_early_stopping_callback,
 )
 from utils.dataset import GenerativeDataModule
 from utils.models import CNN, MLP
@@ -27,7 +30,6 @@ from utils.visualisation import (
     save_2d_samples,
     save_image_samples,
 )
-from pytorch_lightning.loggers import MLFlowLogger
 
 # Configure matplotlib for better aesthetics
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -93,7 +95,6 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
             "std_pairwise_distance": [],
             "distance_entropy": [],
         }
-        self.val_metrics = []
 
         # Vector field network v_θ(x, t)
         if model_cfg.model_type.upper() == "MLP":
@@ -301,20 +302,27 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        """Validation step - compute evaluation metrics."""
-        # Only run evaluation on the first batch (very intensive)
-        if batch_idx == 0:
-            val_metrics = self.run_evaluation()
-            for k, v in val_metrics.items():
-                self.log(f"eval/{k}", v, sync_dist=True, on_epoch=True)
-            self.val_metrics.append(val_metrics)
-
     def on_validation_epoch_end(self):
-        if self.val_metrics and any(len(d) > 0 for d in self.val_metrics):
+        # Run evaluation only at epoch end
+        # Only runs every N epochs but this is handled inside self.run_evaluation()
+        # Added barriers as there were some rank issues at times on Berz
+
+        if self.trainer.world_size > 1:
+            torch.distributed.barrier()
+
+        val_metrics = self.run_evaluation()
+
+        if self.trainer.world_size > 1:
+            torch.distributed.barrier()
+
+        # Log metrics
+        for k, v in val_metrics.items():
+            self.log(f"eval/{k}", v, sync_dist=True)
+
+        if val_metrics and any(len(d) > 0 for d in val_metrics):
             self.metrics_history["epoch"].append(self.current_epoch)
             # Get all keys from the first dict (since all dicts have the same keys)
-            keys = self.val_metrics[0].keys()
+            keys = val_metrics[0].keys()
             for key in keys:
                 # Collect all values for this key across all dicts
                 values = [d[key] for d in self.val_metrics]
@@ -324,7 +332,6 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
                 ).item()
                 # Append the mean to the history
                 self.metrics_history[key].append(mean_value)
-        self.val_metrics.clear()
 
     def configure_optimizers(self):
         """Configure Adam optimizer."""
@@ -429,7 +436,7 @@ def main(cfg: DictConfig):
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
         accumulate_grad_batches=gradient_accumulation,
-        num_sanity_val_steps=0
+        num_sanity_val_steps=0,
     )
     try:
         trainer.fit(model, datamodule)
@@ -483,18 +490,14 @@ def main(cfg: DictConfig):
     final_fid = metrics_history["fid"][-1]
     if not np.isfinite(final_train_loss) or not np.isfinite(final_fid):
         last_finite_train_idx = np.where(np.isfinite(tracker.train_losses))[0][-1]
-        last_finite_fid_idx = np.where(np.isfinite(metrics_history["fid"]))[
-            0
-        ][-1]
+        last_finite_fid_idx = np.where(np.isfinite(metrics_history["fid"]))[0][-1]
         final_train_loss = tracker.train_losses[last_finite_train_idx]
         final_fid = metrics_history["fid"][last_finite_fid_idx]
 
     mlflow_logger.experiment.log_metric(
         mlflow_logger.run_id, "final_train_loss", final_train_loss
     )
-    mlflow_logger.experiment.log_metric(
-        mlflow_logger.run_id, "final_fid", final_fid
-    )
+    mlflow_logger.experiment.log_metric(mlflow_logger.run_id, "final_fid", final_fid)
 
     # Return train loss and eval/coverage
     return final_train_loss, final_fid
