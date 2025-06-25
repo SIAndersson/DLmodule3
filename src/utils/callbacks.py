@@ -668,7 +668,7 @@ def create_evaluation_config(
             "logger": log,
             "model_type": model_type,
             "dataset_type": data_type,
-            "eval_every_n_epochs": 10,
+            "eval_every_n_epochs": 10 if data_type == "image" else 2,
             "num_samples": 2000,
             "feature_extractor": "mobilenet" if data_type == "image" else None,
             "cache_dir": "./weights",

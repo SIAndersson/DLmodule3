@@ -517,6 +517,7 @@ def main(cfg: DictConfig):
     device = next(model.parameters()).device
 
     if cfg.main.visualization:
+        model_checkpoint_callback.best_model_path
         best_model = DiffusionModel.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
         )

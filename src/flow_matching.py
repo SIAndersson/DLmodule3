@@ -453,6 +453,7 @@ def main(cfg: DictConfig):
 
     # Generate samples
     if cfg.main.visualization:
+        log.info(f"Loading best model from {model_checkpoint_callback.best_model_path}")
         best_model = FlowMatching.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
         )
