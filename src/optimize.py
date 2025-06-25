@@ -154,7 +154,6 @@ def objective(trial):
             evaluation_level=cfg.main.evaluation_level,
         )
 
-        # Your existing model and trainer setup here
         print(f"Setting up dataset {cfg.model.generative_model}...")
         if cfg.model.generative_model == "flow_matching":
             model = FlowMatching(cfg.model, eval_config)
@@ -182,7 +181,6 @@ def objective(trial):
         else:
             gradient_accumulation = 1
 
-        # Find appropriate values
         if torch.cuda.is_available():
             accelerator = "gpu"
             devices = torch.cuda.device_count()
@@ -207,8 +205,8 @@ def objective(trial):
             devices=devices,
             strategy=strategy,
             callbacks=callbacks,
-            enable_progress_bar=True,  # Reduce output clutter
-            logger=True,  # Disable logging for trials
+            enable_progress_bar=True,  # Better tracking
+            logger=False,  # Disable logging for trials
             log_every_n_steps=10,
             gradient_clip_val=cfg.main.grad_clip,
             accumulate_grad_batches=gradient_accumulation,
