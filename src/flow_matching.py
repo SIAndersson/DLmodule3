@@ -460,11 +460,11 @@ def main(cfg: DictConfig):
             cfg.main.dataset.lower() == "two_moons"
             or cfg.main.dataset.lower() == "2d_gaussians"
         ):
-            samples = best_model.sample(num_samples=2000)
+            final_samples = best_model.sample(num_samples=2000)
 
             X = X_train.cpu().numpy()  # Move original data to CPU for plotting
             samples = (
-                samples.cpu().numpy()
+                final_samples.cpu().numpy()
             )  # Move generated samples to CPU for plotting
 
             save_2d_samples(
@@ -476,6 +476,8 @@ def main(cfg: DictConfig):
             # Save generated samples
             save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
             plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
+        # Final evaluation
+        final_metrics = model.run_final_evaluation(final_samples)
 
     metrics_history = model.get_metrics_history()
     if cfg.main.visualization:

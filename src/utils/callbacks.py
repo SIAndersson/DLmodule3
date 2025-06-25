@@ -503,13 +503,14 @@ class GenerativeModelEvaluator:
 
         return fid.item()
 
-    def evaluate(self, model, device):
+    def evaluate(self, model, device, generated_samples=None):
         """Run evaluation at the end of train epoch"""
         if self.real_features_cache is None:
             return {}
 
         # Generate samples
-        generated_samples = self.generate_samples(model, device)
+        if generated_samples is None:
+            generated_samples = self.generate_samples(model, device)
         generated_samples = generated_samples.to(device)
         fake_features = self._extract_features(generated_samples).cpu()
 
@@ -627,6 +628,30 @@ class EvaluationMixin:
             return {}
 
         return self.evaluator.evaluate(self, self.device)
+
+    def run_final_evaluation(self, generated_samples):
+        """Run final evaluation regardless of epoch timing"""
+        if not hasattr(self, "evaluator"):
+            print("No evaluator found. Make sure to call setup_evaluation() first.")
+            return {}
+
+        print("Running final evaluation...")
+        metrics = self.evaluator.evaluate(
+            self, self.device, generated_samples=generated_samples
+        )
+
+        # Pretty print the results
+        print("\n" + "=" * 50)
+        print("FINAL EVALUATION METRICS")
+        print("=" * 50)
+        for metric_name, value in metrics.items():
+            if isinstance(value, float):
+                print(f"{metric_name:25}: {value:.6f}")
+            else:
+                print(f"{metric_name:25}: {value}")
+        print("=" * 50)
+
+        return metrics
 
 
 def create_evaluation_config(

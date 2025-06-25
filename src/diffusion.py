@@ -523,16 +523,16 @@ def main(cfg: DictConfig):
             cfg.main.dataset.lower() == "two_moons"
             or cfg.main.dataset.lower() == "2d_gaussians"
         ):
-            generated_samples = best_model.sample((2000, 2), device)
+            final_samples = best_model.sample((2000, 2), device)
 
             X = data.cpu().numpy()  # Move original data to CPU for plotting
             samples = (
-                generated_samples.cpu().numpy()
+                final_samples.cpu().numpy()
             )  # Move generated samples to CPU for plotting
 
             save_2d_samples(samples, X, tracker, "diffusion", cfg.main.dataset.lower())
 
-            visualize_diffusion_process(best_model, generated_samples)
+            visualize_diffusion_process(best_model, final_samples)
         else:
             # Use DDIM sampler for large dataset so it doesn't take a million years
             final_samples = best_model.ddim_sample((16, 3, 256, 256), device)
@@ -540,6 +540,8 @@ def main(cfg: DictConfig):
             # Save generated samples
             save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
             plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
+        # Final evaluation
+        final_metrics = model.run_final_evaluation(final_samples)
 
     metrics_history = model.get_metrics_history()
     if cfg.main.visualization:

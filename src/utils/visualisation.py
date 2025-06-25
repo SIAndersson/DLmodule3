@@ -83,7 +83,7 @@ def plot_evaluation_metrics(
                 "log_density_ratio",
                 "condition_number_ratio",
             ],
-            "better": "lower",  # Generally closer to 0 is better
+            "better": "zero",  # Generally closer to 0 is better
             "title": "Ratio Metrics (Closer to 0 is Better)",
         },
     }
@@ -156,6 +156,9 @@ def plot_evaluation_metrics(
             if better == "lower":
                 best_idx = np.argmin(values)
                 best_label = f"Best: {values[best_idx]:.4f}"
+            elif better == "zero":
+                best_idx = np.argmin(np.abs(values))
+                best_label = f"Best: {values[best_idx]:.4f}"
             else:
                 best_idx = np.argmax(values)
                 best_label = f"Best: {values[best_idx]:.4f}"
@@ -215,6 +218,7 @@ def plot_evaluation_metrics(
     model_name = "Flow matching" if model_type == "vector_field" else "diffusion"
 
     # Add summary statistics as text
+    # Add more detailed summary text to the figure
     summary_text = f"""
     Training Summary:
     • Total Epochs: {len(epochs)}
