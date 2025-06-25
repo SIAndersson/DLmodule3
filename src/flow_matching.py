@@ -95,6 +95,7 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
             "std_pairwise_distance": [],
             "distance_entropy": [],
         }
+        self.val_metrics = []
 
         # Vector field network v_θ(x, t)
         if model_cfg.model_type.upper() == "MLP":
@@ -299,30 +300,27 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
         x_1 = batch[0] if isinstance(batch, (list, tuple)) else batch
         loss = self.flow_matching_loss(x_1)
 
-        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_loss", loss, prog_bar=True, sync_dist=True, on_epoch=True)
         return loss
 
+    def validation_step(self, batch, batch_idx):
+        """Validation step - compute evaluation metrics."""
+        # Only run evaluation on the first batch (very intensive)
+        if batch_idx == 0:
+            val_metrics = self.run_evaluation()
+
+            # Only log from rank 0, avoid sync_dist
+            if self.trainer.global_rank == 0:
+                for k, v in val_metrics.items():
+                    self.log(f"eval/{k}", v, sync_dist=False, on_epoch=True)
+
+            self.val_metrics.append(val_metrics)
+
     def on_validation_epoch_end(self):
-        # Run evaluation only at epoch end
-        # Only runs every N epochs but this is handled inside self.run_evaluation()
-        # Added barriers as there were some rank issues at times on Berz
-
-        if self.trainer.world_size > 1:
-            torch.distributed.barrier()
-
-        val_metrics = self.run_evaluation()
-
-        if self.trainer.world_size > 1:
-            torch.distributed.barrier()
-
-        # Log metrics
-        for k, v in val_metrics.items():
-            self.log(f"eval/{k}", v, sync_dist=True)
-
-        if val_metrics and any(len(d) > 0 for d in val_metrics):
+        if self.val_metrics and any(len(d) > 0 for d in self.val_metrics):
             self.metrics_history["epoch"].append(self.current_epoch)
             # Get all keys from the first dict (since all dicts have the same keys)
-            keys = val_metrics[0].keys()
+            keys = self.val_metrics[0].keys()
             for key in keys:
                 # Collect all values for this key across all dicts
                 values = [d[key] for d in self.val_metrics]
@@ -332,6 +330,7 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
                 ).item()
                 # Append the mean to the history
                 self.metrics_history[key].append(mean_value)
+        self.val_metrics.clear()
 
     def configure_optimizers(self):
         """Configure Adam optimizer."""

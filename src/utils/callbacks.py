@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import torchvision.models as models
 import torchvision.transforms as transforms
 from dotenv import load_dotenv
-from pytorch_lightning.callbacks import Callback, ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from scipy.stats import entropy, kstest, wasserstein_distance
 
 load_dotenv()
@@ -182,7 +182,9 @@ class GenerativeModelEvaluator:
                     if self.model_type == "vector_field":
                         samples = model.fast_sample(current_batch_size, device)
                     elif self.model_type == "diffusion":
-                        samples = model.ddim_sample((current_batch_size, 2), device, num_inference_steps=100)
+                        samples = model.ddim_sample(
+                            (current_batch_size, 2), device, num_inference_steps=100
+                        )
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
                 else:  # image
@@ -433,65 +435,75 @@ class GenerativeModelEvaluator:
         }
 
     def _compute_fid(self, real_features, fake_features):
-            """
-            Compute Fréchet Inception Distance (FID) using GPU operations.
-            FID measures the distance between two multivariate Gaussians.
-            """
-            # Ensure we have enough samples for stable statistics
-            if len(real_features) < 10 or len(fake_features) < 10:
-                return float('inf')
+        """
+        Compute Fréchet Inception Distance (FID) using GPU operations.
+        FID measures the distance between two multivariate Gaussians.
+        """
+        # Ensure we have enough samples for stable statistics
+        if len(real_features) < 10 or len(fake_features) < 10:
+            return float("inf")
 
-            # Compute means
-            mu_real = torch.mean(real_features, dim=0)
-            mu_fake = torch.mean(fake_features, dim=0)
+        # Compute means
+        mu_real = torch.mean(real_features, dim=0)
+        mu_fake = torch.mean(fake_features, dim=0)
 
-            # Compute covariance matrices
-            real_centered = real_features - mu_real
-            fake_centered = fake_features - mu_fake
+        # Compute covariance matrices
+        real_centered = real_features - mu_real
+        fake_centered = fake_features - mu_fake
 
-            sigma_real = torch.matmul(real_centered.t(), real_centered) / (len(real_features) - 1)
-            sigma_fake = torch.matmul(fake_centered.t(), fake_centered) / (len(fake_features) - 1)
+        sigma_real = torch.matmul(real_centered.t(), real_centered) / (
+            len(real_features) - 1
+        )
+        sigma_fake = torch.matmul(fake_centered.t(), fake_centered) / (
+            len(fake_features) - 1
+        )
 
-            # Add small diagonal for numerical stability
-            eps = 1e-6
-            sigma_real += eps * torch.eye(sigma_real.shape[0], device=real_features.device)
-            sigma_fake += eps * torch.eye(sigma_fake.shape[0], device=fake_features.device)
+        # Add small diagonal for numerical stability
+        eps = 1e-6
+        sigma_real += eps * torch.eye(sigma_real.shape[0], device=real_features.device)
+        sigma_fake += eps * torch.eye(sigma_fake.shape[0], device=fake_features.device)
 
-            # Compute mean difference squared
-            diff = mu_real - mu_fake
-            mean_diff_sq = torch.dot(diff, diff)
+        # Compute mean difference squared
+        diff = mu_real - mu_fake
+        mean_diff_sq = torch.dot(diff, diff)
 
-            # Compute trace of covariances
-            tr_sigma_real = torch.trace(sigma_real)
-            tr_sigma_fake = torch.trace(sigma_fake)
+        # Compute trace of covariances
+        tr_sigma_real = torch.trace(sigma_real)
+        tr_sigma_fake = torch.trace(sigma_fake)
 
-            # Compute sqrt(sigma_real @ sigma_fake) using eigendecomposition
-            # This is more stable than direct matrix square root
-            try:
-                # Compute sigma_real^(1/2) @ sigma_fake @ sigma_real^(1/2)
-                eigenvals_real, eigenvecs_real = torch.linalg.eigh(sigma_real)
-                eigenvals_real = torch.clamp(eigenvals_real, min=eps)  # Ensure positive
+        # Compute sqrt(sigma_real @ sigma_fake) using eigendecomposition
+        # This is more stable than direct matrix square root
+        try:
+            # Compute sigma_real^(1/2) @ sigma_fake @ sigma_real^(1/2)
+            eigenvals_real, eigenvecs_real = torch.linalg.eigh(sigma_real)
+            eigenvals_real = torch.clamp(eigenvals_real, min=eps)  # Ensure positive
 
-                sqrt_sigma_real = eigenvecs_real @ torch.diag(torch.sqrt(eigenvals_real)) @ eigenvecs_real.t()
+            sqrt_sigma_real = (
+                eigenvecs_real
+                @ torch.diag(torch.sqrt(eigenvals_real))
+                @ eigenvecs_real.t()
+            )
 
-                # Compute sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
-                middle_matrix = sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
-                eigenvals_middle, _ = torch.linalg.eigh(middle_matrix)
-                eigenvals_middle = torch.clamp(eigenvals_middle, min=0)  # Ensure non-negative
+            # Compute sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
+            middle_matrix = sqrt_sigma_real @ sigma_fake @ sqrt_sigma_real
+            eigenvals_middle, _ = torch.linalg.eigh(middle_matrix)
+            eigenvals_middle = torch.clamp(
+                eigenvals_middle, min=0
+            )  # Ensure non-negative
 
-                tr_sqrt_product = torch.sum(torch.sqrt(eigenvals_middle))
+            tr_sqrt_product = torch.sum(torch.sqrt(eigenvals_middle))
 
-            except Exception as e:
-                # Fallback to approximation if eigendecomposition fails
-                self.logger.warning(f"FID computation failed with eigendecomposition: {e}")
-                # Use Frobenius norm approximation: ||A||_F ≈ sqrt(tr(A^T A))
-                product_approx = torch.matmul(sigma_real, sigma_fake)
-                tr_sqrt_product = torch.sqrt(torch.trace(product_approx) + eps)
+        except Exception as e:
+            # Fallback to approximation if eigendecomposition fails
+            self.logger.warning(f"FID computation failed with eigendecomposition: {e}")
+            # Use Frobenius norm approximation: ||A||_F ≈ sqrt(tr(A^T A))
+            product_approx = torch.matmul(sigma_real, sigma_fake)
+            tr_sqrt_product = torch.sqrt(torch.trace(product_approx) + eps)
 
-            # Compute FID
-            fid = mean_diff_sq + tr_sigma_real + tr_sigma_fake - 2 * tr_sqrt_product
+        # Compute FID
+        fid = mean_diff_sq + tr_sigma_real + tr_sigma_fake - 2 * tr_sqrt_product
 
-            return fid.item()
+        return fid.item()
 
     def evaluate(self, model, device):
         """Run evaluation at the end of train epoch"""
@@ -509,9 +521,7 @@ class GenerativeModelEvaluator:
 
         # Compute FID
         if self.compute_fid:
-            fid = self._compute_fid(
-                self.real_features_cache, fake_features
-            )
+            fid = self._compute_fid(self.real_features_cache, fake_features)
             metrics["fid"] = fid
             self.logger.debug("Computed FID.")
 
@@ -584,7 +594,11 @@ class MetricTracker(Callback):
         self.train_losses = []
 
     def on_train_epoch_end(self, trainer, pl_module):
-        loss = trainer.callback_metrics.get("train_loss")
+        # Try to get loss for epoch
+        loss = trainer.callback_metrics.get("train_loss_epoch")
+        # If fails, get for step instead
+        if loss is None:
+            loss = trainer.callback_metrics.get("train_loss")
         if loss is not None:
             self.train_losses.append(loss.item())
 
@@ -691,7 +705,7 @@ def create_evaluation_config(
                 "compute_density_consistency": True,
                 "compute_mode_collapse": True,
                 "compute_diversity_metrics": True,
-                "compute_fid": False, # Expensive
+                "compute_fid": False,  # Expensive
                 "k_nearest": 5,
                 "mmd_kernel": "rbf",
             }
