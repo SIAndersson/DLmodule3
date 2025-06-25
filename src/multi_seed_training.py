@@ -196,7 +196,7 @@ def train_single_seed(cfg: DictConfig, seed: int, extra_name: str) -> Tuple[torc
     Train the model with a single seed and return results.
     
     Returns:
-        samples, metrics_history, tracker, final_train_loss, final_fid
+        samples, metrics_history, tracker, final_train_loss, final_coverage
     """
     log.info(f"Training with seed {seed}")
     
@@ -297,7 +297,7 @@ def train_single_seed(cfg: DictConfig, seed: int, extra_name: str) -> Tuple[torc
             if len(last_finite_coverage_idx) > 0:
                 final_coverage = metrics_history["coverage"][last_finite_coverage_idx[-1]]
         
-        return final_samples, metrics_history, tracker, final_train_loss, final_fid
+        return final_samples, metrics_history, tracker, final_train_loss, final_coverage
         
     except Exception as e:
         log.error(f"Training failed for seed {seed}: {e}")
