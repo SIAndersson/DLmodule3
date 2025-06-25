@@ -216,7 +216,13 @@ def objective(trial):
         )
 
         # Train model
-        trainer.fit(model, datamodule)
+        try:
+            trainer.fit(model, datamodule)
+            log.info("Training complete.")
+        # Most likely fails due to Cuda OOM, return high values for loss and metric
+        except Exception as e:
+            log.error(f"Training failed: {e}")
+            return 1e10, 1e10
 
         # Return both objectives for multiobjective optimization
         print(f"Callback metrics: {trainer.callback_metrics}")
