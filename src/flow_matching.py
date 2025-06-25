@@ -41,7 +41,7 @@ if torch.cuda.is_available():
     device_props = torch.cuda.get_device_properties(0)
     if device_props.major >= 7:
         torch.set_float32_matmul_precision("high")
-        print("Tensor cores enabled globally")
+        log.info("Tensor cores enabled globally")
 
 
 class FlowMatching(pl.LightningModule, EvaluationMixin):
@@ -449,8 +449,6 @@ def main(cfg: DictConfig):
         log.error(f"Training failed: {e}")
         return 1e10, 1e10
 
-    log.info(f"Train losses: {tracker.train_losses}")
-
     # Generate samples
     if cfg.main.visualization:
         log.info(f"Loading best model from {model_checkpoint_callback.best_model_path}")
@@ -490,7 +488,7 @@ def main(cfg: DictConfig):
 
     # Get summary table
     summary_df = create_metrics_summary_table(metrics_history)
-    print(summary_df)
+    log.info(summary_df)
 
     # First check that we don't have inf or NaN
     final_train_loss = tracker.train_losses[-1]

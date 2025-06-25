@@ -42,9 +42,6 @@ def plot_evaluation_metrics(
         matplotlib Figure object
     """
 
-    # Get metrics history
-    print(metrics_history)
-
     # Check if we have data
     if not metrics_history["epoch"]:
         raise ValueError("No metrics data found. Run training with the callback first.")
