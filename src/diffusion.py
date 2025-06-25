@@ -237,10 +237,14 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         if batch_idx == 0:
             val_metrics = self.run_evaluation()
 
-            # Only log from rank 0, avoid sync_dist
-            if self.trainer.global_rank == 0:
-                for k, v in val_metrics.items():
-                    self.log(f"eval/{k}", v, sync_dist=False, on_epoch=True)
+            if self.trainer.world_size > 1:
+                self.trainer.strategy.barrier()
+
+            for k, v in val_metrics.items():
+                self.log(f"eval/{k}", v, sync_dist=True, on_epoch=True)
+
+            if self.trainer.world_size > 1:
+                self.trainer.strategy.barrier()
 
             self.val_metrics.append(val_metrics)
 
@@ -489,7 +493,7 @@ def main(cfg: DictConfig):
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        callbacks=[tracker, early_stopping_callback],
+        callbacks=[tracker],
         logger=mlflow_logger,
         enable_progress_bar=True,
         log_every_n_steps=10,

@@ -215,6 +215,7 @@ data/
 weights/
 evaluation_plots/
 model_checkpoints/
+checkpoints/
 
 # Tex stuff
 *.acn

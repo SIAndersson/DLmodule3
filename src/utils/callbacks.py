@@ -182,9 +182,7 @@ class GenerativeModelEvaluator:
                     if self.model_type == "vector_field":
                         samples = model.fast_sample(current_batch_size, device)
                     elif self.model_type == "diffusion":
-                        samples = model.ddim_sample(
-                            (current_batch_size, 2), device, num_inference_steps=100
-                        )
+                        samples = model.sample((current_batch_size, 2), device)
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
                 else:  # image
