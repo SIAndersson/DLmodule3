@@ -434,7 +434,7 @@ def main(cfg: DictConfig):
         devices=devices,
         strategy=strategy,
         logger=mlflow_logger,
-        callbacks=[tracker],
+        callbacks=[tracker, model_checkpoint_callback],
         enable_progress_bar=True,
         log_every_n_steps=10,
         gradient_clip_val=cfg.main.grad_clip,
@@ -453,12 +453,15 @@ def main(cfg: DictConfig):
 
     # Generate samples
     if cfg.main.visualization:
+        best_model = FlowMatching.load_from_checkpoint(
+            model_checkpoint_callback.best_model_path
+        )
         log.info("Generating samples...")
         if (
             cfg.main.dataset.lower() == "two_moons"
             or cfg.main.dataset.lower() == "2d_gaussians"
         ):
-            samples = model.sample(num_samples=2000)
+            samples = best_model.sample(num_samples=2000)
 
             X = X_train.cpu().numpy()  # Move original data to CPU for plotting
             samples = (
@@ -469,7 +472,7 @@ def main(cfg: DictConfig):
                 samples, X, tracker, "flow_matching", cfg.main.dataset.lower()
             )
         else:
-            final_samples = model.sample(num_samples=16)
+            final_samples = best_model.sample(num_samples=16)
 
             # Save generated samples
             save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())

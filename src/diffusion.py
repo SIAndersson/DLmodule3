@@ -493,7 +493,7 @@ def main(cfg: DictConfig):
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        callbacks=[tracker],
+        callbacks=[tracker, model_checkpoint_callback],
         logger=mlflow_logger,
         enable_progress_bar=True,
         log_every_n_steps=10,
@@ -517,11 +517,14 @@ def main(cfg: DictConfig):
     device = next(model.parameters()).device
 
     if cfg.main.visualization:
+        best_model = DiffusionModel.load_from_checkpoint(
+            model_checkpoint_callback.best_model_path
+        )
         if (
             cfg.main.dataset.lower() == "two_moons"
             or cfg.main.dataset.lower() == "2d_gaussians"
         ):
-            generated_samples = model.sample((2000, 2), device)
+            generated_samples = best_model.sample((2000, 2), device)
 
             X = data.cpu().numpy()  # Move original data to CPU for plotting
             samples = (
@@ -530,10 +533,10 @@ def main(cfg: DictConfig):
 
             save_2d_samples(samples, X, tracker, "diffusion", cfg.main.dataset.lower())
 
-            visualize_diffusion_process(model, generated_samples)
+            visualize_diffusion_process(best_model, generated_samples)
         else:
             # Use DDIM sampler for large dataset so it doesn't take a million years
-            final_samples = model.ddim_sample((16, 3, 256, 256), device)
+            final_samples = best_model.ddim_sample((16, 3, 256, 256), device)
 
             # Save generated samples
             save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
