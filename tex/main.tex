@@ -2,6 +2,7 @@
 \usepackage{graphicx} % Required for inserting images
 \usepackage[numbers]{natbib} % Numeric references
 \usepackage{hyperref}
+\usepackage[utf8]{inputenc}
 
 \hypersetup{
     colorlinks=true, % Enable colored links
@@ -51,6 +52,12 @@ Diffusion models have applications not only in image generation, but also text, 
 
 Unlike diffusion models, flow matching models do not use noise injection, and so does not work with denoising as such. Rather, flow matching models take inspiration from fluid dynamics and use a neural network to simulate a vector field that matches the flow between distributions \cite{holderrieth2025introduction}. This allows flow matching models to train with fewer steps \cite{kornilov2024optimal} and still potentially be faster and more stable than diffusion models \cite{lipman2022flow}, since they are deterministic and seeks to follow an optimal transportation path. 
 
+\paragraph{Trajectory flow matching} is a training algorithm for neural differential equation models that require no simulation. It is developed specifically for clinical settings and is able to model processes based on sparse, irregular and noisy data. \cite{zhang2024trajctory}
+
+\paragraph{Discrete flow matching} is a model designed to perform on discrete sequential data. It is ``a generalization of continuous flow matching and discrete flows'', and seeks to improve performance on tasks such as text generation. The approach is new, and the results are inconclusive, but the authors find it a promising future alternative to autoregressive models. \cite{gat2024discrete} 
+
+\paragraph{Optimal flow matching} seeks to improve inference performance by finding the optimal transport displacements that allow inference in a single step. It does so by simulating straight trajectories that do not require solving differential equations, by, in turn, selecting only vector fields yielding straight paths. \cite{kornilov2024optimal}
+
 \section{Method}
 
 We begin by implementing two variants of Flow Matching models as well as two variants of Diffusion models. To compare the chosen model families and model variants, we train and evaluate all models on two different datasets:
@@ -61,7 +68,7 @@ We begin by implementing two variants of Flow Matching models as well as two var
 
 
 \bibliographystyle{plainnat}
-\bibliography{references}
+\addbibresource{references}
 
 \printbibliography
 
