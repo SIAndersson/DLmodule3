@@ -38,11 +38,10 @@ Croitoru et al. conducts a survey on how diffision models apply to computer visi
 DDPMs model a probability distribution of the applied noise in the latent space of the neural model. DDPMs typically require many, in the order of 1000 or more, discrete steps when adding the noise. It uses a stochastic sampling strategy that, while requiring many steps, can lead to more diverse outputs. They are very flexible and can be optimized using a variety of different noise schedules and loss functions.
 
 \paragraph{Noise Conditioned Score Networks (NCSNs)} 
-Estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determine the direction of ``less noise''. The model trains to minimize the loss over several noise levels, and uses the score function to to simulate differential equations that can apply the noise in reverse, that is, to remove the noise.
+Estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determine the direction of lower noise magnitude. The model trains to minimize the loss over several noise levels, and uses the score function to to simulate differential equations that can apply the noise in reverse, that is, to remove the noise.
 
 \paragraph{Stochastic differential equations (SDEs)} 
 Model diffusion as a continuous time model and can be seen as a generalization combining both DDPMs and NCSNs.
-
 
 \paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and score-based models. It models the forward diffusion as a continuous stochastic differential equation, and learns to reverse this by applying the score function.
 
