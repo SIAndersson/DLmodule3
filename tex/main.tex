@@ -54,7 +54,7 @@ Diffusion models have applications not only in image generation, but also text, 
 
 Unlike diffusion models, flow matching models do not use noise injection, and so does not work with denoising as such. Rather, flow matching models take inspiration from fluid dynamics and use a neural network to simulate a vector field that matches the flow between distributions \cite{holderrieth2025introduction}. This allows flow matching models to train with fewer steps \cite{kornilov2024optimal} and still potentially be faster and more stable than diffusion models \cite{lipman2022flow}, since they are deterministic and seeks to follow an optimal transportation path. 
 
-\paragraph{Trajectory flow matching} is a training algorithm for neural differential equation models that require no simulation. It is developed specifically for clinical settings and is able to model processes based on sparse, irregular and noisy data. \cite{zhang2024trajctory}
+\paragraph{Trajectory flow matching} is a training algorithm for neural differential equation models that require no simulation. It is developed specifically for clinical settings and is able to model processes based on sparse, irregular and noisy data. \cite{zhang2024trajectory}
 
 \paragraph{Discrete flow matching} is a model designed to perform on discrete sequential data. It is ``a generalization of continuous flow matching and discrete flows'', and seeks to improve performance on tasks such as text generation. The approach is new, and the results are inconclusive, but the authors find it a promising future alternative to autoregressive models. \cite{gat2024discrete} 
 
