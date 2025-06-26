@@ -36,7 +36,7 @@ class MultiObjectiveMedianPrunerCallback(Callback):
         secondary_monitor: str = "eval/fid",
         n_startup_trials: int = 10,
         n_warmup_steps: int = 10,
-        interval_steps: int = 1,
+        interval_steps: int = 5,
     ):
         super().__init__()
         self.trial = trial
