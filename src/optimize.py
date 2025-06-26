@@ -218,6 +218,22 @@ def objective(trial):
             trainer.fit(model, datamodule)
             log.info("Training complete.")
         # Most likely fails due to Cuda OOM, return high values for loss and metric
+        except optuna.TrialPruned as e:
+            log.error(f"Trial pruned: {e}")
+            train_loss = trainer.callback_metrics.get("train_loss", None)
+            eval_fid = trainer.callback_metrics.get("eval/fid", None)
+
+            # Fallback to large values if missing or not a number
+            if train_loss is None or not hasattr(train_loss, "item"):
+                train_loss_value = 1e10
+            else:
+                train_loss_value = train_loss.item()
+            if eval_fid is None or not hasattr(eval_fid, "item"):
+                eval_fid_value = 1e10
+            else:
+                eval_fid_value = eval_fid.item()
+
+            return train_loss_value, eval_fid_value
         except Exception as e:
             log.error(f"Training failed: {e}")
             return 1e10, 1e10
