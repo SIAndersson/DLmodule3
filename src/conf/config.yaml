@@ -3,7 +3,6 @@ defaults:
   - model: flow_matching_2d
   - logging: simple
   - _self_
-  - override hydra/sweeper: optuna
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 

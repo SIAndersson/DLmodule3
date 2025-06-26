@@ -1,7 +1,6 @@
 import logging
-import os
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 import pickle
 
 import hydra

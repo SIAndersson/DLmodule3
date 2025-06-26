@@ -257,25 +257,33 @@ def objective(trial):
 
 def run_optimization():
     """Run the multiobjective hyperparameter optimization"""
-    
+
+    with hydra.initialize(config_path="conf", version_base=None):
+        cli_overrides = [arg for arg in sys.argv[1:] if "=" in arg]
+        cfg = hydra.compose(config_name="config", overrides=[*cli_overrides])
+
     if cfg.model.generative_model == "flow_matching":
         study_name = "flowmatching_study"
-        storage = RDBStorage("postgresql+psycopg2://x_sofan@localhost/flowmatching_study_db")
+        storage = RDBStorage(
+            "postgresql+psycopg2://x_sofan@localhost/flowmatching_study_db"
+        )
     else:
         study_name = "diffusion_study"
-        storage = RDBStorage("postgresql+psycopg2://x_sofan@localhost/diffusion_study_db")
-    
+        storage = RDBStorage(
+            "postgresql+psycopg2://x_sofan@localhost/diffusion_study_db"
+        )
+
     # Create multiobjective study
     study = optuna.create_study(
         study_name=study_name,
         storage=storage,
         directions=["minimize", "minimize"],  # minimize both train_loss and eval_fid
-        sampler=optuna.samplers.NSGAIISampler(seed=10),  # Good for multiobjective
-        load_if_exists=True
+        sampler=optuna.samplers.TPESampler(),  # Changed to TPESampler as it is faster in the current version of Optuna (4.4.0)
+        load_if_exists=True,
     )
 
     # Optimize
-    study.optimize(objective, callbacks=[MaxTrialsCallback(100)])
+    study.optimize(objective, callbacks=[MaxTrialsCallback(200)])
 
     # Get Pareto front solutions
     pareto_front = study.best_trials

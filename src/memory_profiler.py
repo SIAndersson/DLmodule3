@@ -418,7 +418,7 @@ class ModelMemoryProfiler:
 
             # Print status
             if result["status"] == "cuda_oom":
-                print(f"  ❌ CUDA OOM Error")
+                print("  ❌ CUDA OOM Error")
             elif result["status"] == "success":
                 memory_display = result.get("gpu_memory_used_torch", "N/A")
                 if memory_display != "N/A":
@@ -428,7 +428,7 @@ class ModelMemoryProfiler:
                             f"    System GPU Memory: {result['gpu_memory_used_system']:.1f} MB"
                         )
                 else:
-                    print(f"  ✅ Success")
+                    print("  ✅ Success")
             else:
                 print(f"  ⚠️  Other Error: {result['status']}")
                 print(f"    Error Message: {result.get('error_message', 'N/A')}")
@@ -612,14 +612,14 @@ class ModelMemoryProfiler:
                         success_df["gpu_memory_used_system"], errors="coerce"
                     ).dropna()
                     if len(torch_memory) > 0 and len(system_memory) > 0:
-                        print(f"\nMemory reporting comparison:")
+                        print("\nMemory reporting comparison:")
                         print(f"  PyTorch reports: {torch_memory.mean():.1f} MB (avg)")
                         print(f"  System reports: {system_memory.mean():.1f} MB (avg)")
                         print(
                             f"  Difference: {abs(system_memory.mean() - torch_memory.mean()):.1f} MB"
                         )
 
-            print(f"\nModel parameters for successful runs:")
+            print("\nModel parameters for successful runs:")
             params = pd.to_numeric(success_df["model_parameters"], errors="coerce")
             print(f"  Min: {params.min():,} parameters")
             print(f"  Max: {params.max():,} parameters")
