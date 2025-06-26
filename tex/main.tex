@@ -25,13 +25,13 @@ For this project, we choose to implement and evaluate flow matching and diffusio
 
 \section{Model Families}
 
-\subsection{Flow Matching}
-
 \subsection{Diffusion}
 
 Diffusion models is a type of deep generative models that has found many applications recently, especially for image generation. The models are based on two diffusion stages. In the \emph{forward diffusion stage}, normally distributed noise is incrementally added to the training data, until the original data is entirely obscured by noise. In the next stage, the \emph{reverse diffusion stage}, the model is trained to recover the original data from the noisy data at each step. Ultimately, this enables the model to generate new data from pure noise. If conditioned with an additional label or prompt during training, the model can become able to generate data from a combination of noise and instruction.
 
 Croitoru et al. conducts a survey on how diffision models apply to computer vision use-cases~\cite{croitoru2023diffusion}. To start with, they outline three main categories of diffusion models:
+
+The model learns to reverse the noise addition in each step. Ultimately, this enables the model to generate new data from noise. \cite{croitoru2023diffusion, yang2023diffusion}
 
 \paragraph{Denoising Diffusion Probabalistic Models (DDPMs)} 
 DDPMs model a probability distribution of the applied noise in the latent space of the neural model. DDPMs typically require many, in the order of 1000 or more, discrete steps when adding the noise. It uses a stochastic sampling strategy that, while requiring many steps, can lead to more diverse outputs. They are very flexible and can be optimized using a variety of different noise schedules and loss functions.
@@ -41,6 +41,15 @@ Estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determi
 
 \paragraph{Stochastic differential equations (SDEs)} 
 Model diffusion as a continuous time model and can be seen as a generalization combining both DDPMs and NCSNs.
+
+
+\paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and score-based models. It models the forward diffusion as a continuous stochastic differential equation, and learns to reverse this by applying the score function.
+
+Diffusion models have applications not only in image generation, but also text, speech, biology and healthcare. \cite{cao2024survey}
+
+\subsection{Flow matching}
+
+Unlike diffusion models, flow matching models do not use noise injection, and so does not work with denoising as such. Rather, flow matching models take inspiration from fluid dynamics and use a neural network to simulate a vector field that matches the flow between distributions \cite{holderrieth2025introduction}. This allows flow matching models to train with fewer steps \cite{kornilov2024optimal} and still potentially be faster and more stable than diffusion models \cite{lipman2022flow}, since they are deterministic and seeks to follow an optimal transportation path. 
 
 \section{Method}
 
@@ -53,5 +62,7 @@ We begin by implementing two variants of Flow Matching models as well as two var
 
 \bibliographystyle{plainnat}
 \bibliography{references}
+
+\printbibliography
 
 \end{document}
