@@ -1,9 +1,9 @@
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
-%\usepackage[numbers]{natbib} % Numeric references
+\usepackage[numbers]{natbib} % Numeric references
 \usepackage{hyperref}
 \usepackage[utf8]{inputenc}
-\usepackage[ backend=biber, style=numeric, ]{biblatex}
+%\usepackage[ backend=biber, style=numeric, ]{biblatex}
 
 \hypersetup{
     colorlinks=true, % Enable colored links
@@ -12,8 +12,6 @@
     urlcolor=black, % Color for external links (URLs)
     filecolor=black % Color for file links
 }
-\addbibresource{references.bib}
-
 
 \title{Blank}
 \author{Sebastian Andersson \and Lo Heander \and Andreas Bexell}
@@ -31,7 +29,7 @@ For this project, we choose to implement and evaluate flow matching and diffusio
 
 \subsection{Diffusion}
 
-Diffusion models is a type of deep generative models that has found many applications recently, especially for image generation. The models are based on two diffusion stages. In the \emph{forward diffusion stage}, normally distributed noise is incrementally added to the training data, until the original data is entirely obscured by noise. In the next stage, the \emph{reverse diffusion stage}, the model is trained to recover the original data from the noisy data at each step. Ultimately, this enables the model to generate new data from pure noise. If conditioned with an additional label or prompt during training, the model can become able to generate data from a combination of noise and instruction. \cite{croitoru2023diffusion, yang2023diffusion}
+Diffusion models is a type of deep generative models that has found many applications recently, especially for image generation. The models are based on two diffusion stages. In the \emph{forward diffusion stage}, normally distributed noise is incrementally added to the training data, until the original data is entirely obscured by noise. In the next stage, the \emph{reverse diffusion stage}, the model is trained to recover the original data from the noisy data at each step. Ultimately, this enables the model to generate new data from pure noise. If conditioned with an additional label or prompt during training, the model can become able to generate data from a combination of noise and instruction. \cite{croitoru2023diffusion,yang2023diffusion}
 
 Croitoru et al. conducts a survey on how diffision models apply to computer vision use-cases~\cite{croitoru2023diffusion}. To start with, they outline three main categories of diffusion models:
 
@@ -48,7 +46,7 @@ Model diffusion as a continuous time model and can be seen as a generalization c
 
 \paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and score-based models. It models the forward diffusion as a continuous stochastic differential equation, and learns to reverse this by applying the score function.
 
-Diffusion models have applications not only in image generation, but also text, speech, biology and healthcare. \cite{cao2024survey}
+Diffusion models have applications not only in image generation, but also text, speech, biology and healthcare~\cite{cao2024survey}.
 
 \subsection{Flow matching}
 
@@ -56,9 +54,9 @@ Unlike diffusion models, flow matching models do not use noise injection, and so
 
 \paragraph{Trajectory flow matching} is a training algorithm for neural differential equation models that require no simulation. It is developed specifically for clinical settings and is able to model processes based on sparse, irregular and noisy data. \cite{zhang2024trajectory}
 
-\paragraph{Discrete flow matching} is a model designed to perform on discrete sequential data. It is ``a generalization of continuous flow matching and discrete flows'', and seeks to improve performance on tasks such as text generation. The approach is new, and the results are inconclusive, but the authors find it a promising future alternative to autoregressive models. \cite{gat2024discrete} 
+\paragraph{Discrete flow matching} is a model designed to perform on discrete sequential data. It is ``a generalization of continuous flow matching and discrete flows'', and seeks to improve performance on tasks such as text generation. The approach is new, and the results are inconclusive, but the authors find it a promising future alternative to autoregressive models~\cite{gat2024discrete}.
 
-\paragraph{Optimal flow matching} seeks to improve inference performance by finding the optimal transport displacements that allow inference in a single step. It does so by simulating straight trajectories that do not require solving differential equations, by, in turn, selecting only vector fields yielding straight paths. \cite{kornilov2024optimal}
+\paragraph{Optimal flow matching} seeks to improve inference performance by finding the optimal transport displacements that allow inference in a single step. It does so by simulating straight trajectories that do not require solving differential equations, by, in turn, selecting only vector fields yielding straight paths~\cite{kornilov2024optimal}.
 
 \section{Method}
 
@@ -69,8 +67,7 @@ We begin by implementing two variants of Flow Matching models as well as two var
 \paragraph{FFHQ}
 
 
-%\bibliographystyle{plainnat}
-
-\printbibliography
+\bibliographystyle{plainnat}
+\bibliography{references}
 
 \end{document}
