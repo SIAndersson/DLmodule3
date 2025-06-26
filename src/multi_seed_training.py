@@ -276,6 +276,7 @@ def train_single_seed(cfg: DictConfig, seed: int, extra_name: str) -> Tuple[torc
             )
             final_samples = model.sample(num_samples=2000)
         elif cfg.model.generative_model == "diffusion":
+            device = next(model.parameters()).device
             best_model = DiffusionModel.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
             )
@@ -313,7 +314,7 @@ def main_multi_seed(cfg: DictConfig):
     seeds = cfg.main.get('seeds', [666, 123, 42, 10, 7])  # Default seeds, reversing bc 10 is the only one that works for default flow matching so we want it visible in visualization
     extra_name = cfg.main.get('extra_name', "default")
     
-    log.info(f"Training Flow Matching model with seeds: {seeds}")
+    log.info(f"Training {cfg.model.generative_model} model with seeds: {seeds}")
     
     # Storage for results
     all_samples = {}
@@ -346,12 +347,12 @@ def main_multi_seed(cfg: DictConfig):
         # Create multi-seed visualization
         save_multi_seed_2d_samples(
             all_samples, X_train, all_trackers,
-            "flow_matching", cfg.main.dataset.lower(), seeds, extra_name
+            cfg.model.generative_model, cfg.main.dataset.lower(), seeds, extra_name
         )
         
         # Create metrics comparison
         save_seed_comparison_metrics(
-            all_metrics, "flow_matching", cfg.main.dataset.lower(), seeds, extra_name
+            all_metrics, cfg.model.generative_model, cfg.main.dataset.lower(), seeds, extra_name
         )
     
     # Save results to file for later analysis

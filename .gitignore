@@ -209,7 +209,7 @@ mlruns/
 multirun/
 
 # Outputs
-*.png
+.vscode/
 .DS_Store
 data/
 weights/
