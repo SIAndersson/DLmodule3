@@ -10,7 +10,9 @@ import pytorch_lightning as pl
 import seaborn as sns
 import torch
 from optuna.trial import TrialState
+from optuna.study import MaxTrialsCallback
 from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
+from optuna.storages import RDBStorage
 
 from diffusion import DiffusionModel
 from flow_matching import FlowMatching
@@ -255,14 +257,25 @@ def objective(trial):
 
 def run_optimization():
     """Run the multiobjective hyperparameter optimization"""
+    
+    if cfg.model.generative_model == "flow_matching":
+        study_name = "flowmatching_study"
+        storage = RDBStorage("postgresql+psycopg2://x_sofan@localhost/flowmatching_study_db")
+    else:
+        study_name = "diffusion_study"
+        storage = RDBStorage("postgresql+psycopg2://x_sofan@localhost/diffusion_study_db")
+    
     # Create multiobjective study
     study = optuna.create_study(
+        study_name=study_name,
+        storage=storage,
         directions=["minimize", "minimize"],  # minimize both train_loss and eval_fid
         sampler=optuna.samplers.NSGAIISampler(seed=10),  # Good for multiobjective
+        load_if_exists=True
     )
 
     # Optimize
-    study.optimize(objective, n_trials=100)
+    study.optimize(objective, callbacks=[MaxTrialsCallback(100)])
 
     # Get Pareto front solutions
     pareto_front = study.best_trials
