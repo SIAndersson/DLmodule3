@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 import tempfile
-
+import time
 import hydra
 import numpy as np
 import optuna
@@ -262,16 +262,29 @@ def run_optimization():
         cli_overrides = [arg for arg in sys.argv[1:] if "=" in arg]
         cfg = hydra.compose(config_name="config", overrides=[*cli_overrides])
 
+    max_retries = 10
+
     if cfg.model.generative_model == "flow_matching":
-        study_name = "flowmatching_study"
-        storage = RDBStorage(
-            "postgresql+psycopg2://x_sofan@localhost/flowmatching_study_db"
+        study_name = "flowmatching_optuna_study"
+        storage_url = cfg.main.get(
+            "postgresql_url", "postgresql://x_sofan@localhost/flowmatching_study_db"
         )
     else:
-        study_name = "diffusion_study"
-        storage = RDBStorage(
-            "postgresql+psycopg2://x_sofan@localhost/diffusion_study_db"
+        study_name = "diffusion_optuna_study"
+        storage_url = cfg.main.get(
+            "postgresql_url", "postgresql://x_sofan@localhost/diffusion_study_db"
         )
+
+    for attempt in range(max_retries):
+        try:
+            storage = RDBStorage(url=storage_url, engine_kwargs={"pool_pre_ping": True})
+            break
+        except Exception as e:
+            print(f"Connection attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+            else:
+                raise
 
     # Create multiobjective study
     study = optuna.create_study(
@@ -283,7 +296,7 @@ def run_optimization():
     )
 
     # Optimize
-    study.optimize(objective, callbacks=[MaxTrialsCallback(200)])
+    study.optimize(objective, callbacks=[MaxTrialsCallback(100)])
 
     # Get Pareto front solutions
     pareto_front = study.best_trials
