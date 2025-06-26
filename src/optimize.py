@@ -34,7 +34,7 @@ class MultiObjectiveMedianPrunerCallback(Callback):
         trial: optuna.Trial,
         primary_monitor: str = "train_loss",
         secondary_monitor: str = "eval/fid",
-        n_startup_trials: int = 5,
+        n_startup_trials: int = 10,
         n_warmup_steps: int = 10,
         interval_steps: int = 1,
     ):
@@ -81,7 +81,9 @@ class MultiObjectiveMedianPrunerCallback(Callback):
             return
 
         # Apply interval checking
-        if (epoch - self.n_warmup_steps) % self.interval_steps != 0:
+        if (epoch - self.n_warmup_steps) % self.interval_steps != 0 or (
+            epoch - self.n_warmup_steps
+        ) < 0:
             return
 
         # Calculate median of best values at this epoch across completed trials

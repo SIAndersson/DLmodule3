@@ -3,10 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Plot hyperparameter sweep results")
-    parser.add_argument("--experiment-name", type=str, required=True, help="Name of the experiment")
+    parser.add_argument(
+        "--experiment-name", type=str, required=True, help="Name of the experiment"
+    )
     return parser.parse_args()
+
 
 def is_pareto_efficient(costs):
     """

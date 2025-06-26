@@ -187,7 +187,9 @@ class GenerativeDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
-            batch_size=32 if self.cfg.main.gradient_accumulation else self.cfg.main.batch_size,
+            batch_size=32
+            if self.cfg.main.gradient_accumulation
+            else self.cfg.main.batch_size,
             shuffle=True,
             num_workers=0,
             pin_memory=True,
@@ -196,7 +198,9 @@ class GenerativeDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         return DataLoader(
             self.val_dataset,
-            batch_size=32 if self.cfg.main.gradient_accumulation else self.cfg.main.batch_size,
+            batch_size=32
+            if self.cfg.main.gradient_accumulation
+            else self.cfg.main.batch_size,
             shuffle=False,
             num_workers=0,
             pin_memory=True,
