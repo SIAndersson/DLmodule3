@@ -515,10 +515,10 @@ def main(cfg: DictConfig):
     device = next(model.parameters()).device
 
     if cfg.main.visualization:
-        model_checkpoint_callback.best_model_path
+        log.info(f"Loading best model from {model_checkpoint_callback.best_model_path}")
         best_model = DiffusionModel.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
-        )
+        ).to(device)
         if (
             cfg.main.dataset.lower() == "two_moons"
             or cfg.main.dataset.lower() == "2d_gaussians"
