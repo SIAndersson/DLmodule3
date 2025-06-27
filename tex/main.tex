@@ -3,6 +3,9 @@
 \usepackage[numbers]{natbib} % Numeric references
 \usepackage{hyperref}
 \usepackage[utf8]{inputenc}
+\usepackage{booktabs}    % For \toprule, \midrule, \bottomrule
+\usepackage{multirow}    % For multirow cells
+\usepackage{caption}     % Optional, for better caption formatting
 %\usepackage[ backend=biber, style=numeric, ]{biblatex}
 
 \hypersetup{
@@ -34,13 +37,13 @@ Diffusion models is a type of deep generative models that has found many applica
 Croitoru et al. conducts a survey on how diffision models apply to computer vision use-cases~\cite{croitoru2023diffusion}. To start with, they outline three main categories of diffusion models:
 
 
-\paragraph{Denoising Diffusion Probabalistic Models (DDPMs)} 
+\paragraph{Denoising Diffusion Probabalistic Models (DDPMs)}
 DDPMs model a probability distribution of the applied noise in the latent space of the neural model. DDPMs typically require many, in the order of 1000 or more, discrete steps when adding the noise. It uses a stochastic sampling strategy that, while requiring many steps, can lead to more diverse outputs. They are very flexible and can be optimized using a variety of different noise schedules and loss functions.
 
-\paragraph{Noise Conditioned Score Networks (NCSNs)} 
+\paragraph{Noise Conditioned Score Networks (NCSNs)}
 Estimates a score function $\nabla_x \log p_t(x)$ at each noise level to determine the direction of lower noise magnitude. The model trains to minimize the loss over several noise levels, and uses the score function to to simulate differential equations that can apply the noise in reverse, that is, to remove the noise.
 
-\paragraph{Stochastic differential equations (SDEs)} 
+\paragraph{Stochastic differential equations (SDEs)}
 Model diffusion as a continuous time model and can be seen as a generalization combining both DDPMs and NCSNs.
 
 \paragraph{Stochastic differential equations} is a continuous time model combining elements from DDPMs and score-based models. It models the forward diffusion as a continuous stochastic differential equation, and learns to reverse this by applying the score function.
@@ -49,7 +52,7 @@ Diffusion models have applications not only in image generation, but also text, 
 
 \subsection{Flow matching}
 
-Unlike diffusion models, flow matching models do not use noise injection, and so does not work with denoising as such. Rather, flow matching models take inspiration from fluid dynamics and use a neural network to simulate a vector field that matches the flow between distributions \cite{holderrieth2025introduction}. This allows flow matching models to train with fewer steps \cite{kornilov2024optimal} and still potentially be faster and more stable than diffusion models \cite{lipman2022flow}, since they are deterministic and seeks to follow an optimal transportation path. 
+Unlike diffusion models, flow matching models do not use noise injection, and so does not work with denoising as such. Rather, flow matching models take inspiration from fluid dynamics and use a neural network to simulate a vector field that matches the flow between distributions \cite{holderrieth2025introduction}. This allows flow matching models to train with fewer steps \cite{kornilov2024optimal} and still potentially be faster and more stable than diffusion models \cite{lipman2022flow}, since they are deterministic and seeks to follow an optimal transportation path.
 
 \paragraph{Trajectory flow matching} is a training algorithm for neural differential equation models that require no simulation. It is developed specifically for clinical settings and is able to model processes based on sparse, irregular and noisy data. \cite{zhang2024trajectory}
 
@@ -64,6 +67,52 @@ We begin by implementing two variants of Flow Matching models as well as two var
 \paragraph{Two-moons} is a synthetic toy dataset to visualize and benchmark classification and generation, designed to be non-trivial and require higher-order models.
 
 \paragraph{FFHQ} is a dataset of high-quality images of faces from flicker. It is used as a traning set and to benchmark generative models.
+
+\section{Results}
+
+\subsection{Hyperparameter optimization}
+
+\begin{table}[h]
+	\centering
+	\caption{Naive and Optuna-optimized hyperparameters for Flow Matching and Diffusion models on Two Moons (MLP) and FFHQ (CNN).}
+	\begin{tabular}{llcccc}
+		\toprule
+		\textbf{Model}                 & \textbf{Dataset}                 & \textbf{Hyperparameter} & \textbf{Naive}     & \textbf{Optimized}  \\
+		\midrule
+		\multirow{7}{*}{Flow Matching} & \multirow{6}{*}{Two Moons (MLP)}
+		                               & Learning Rate                    & $2\cdot10^{-3}$         & $1.03\cdot10^{-3}$                       \\
+		                               &                                  & Weight Decay            & $1 \cdot 10^{-3}$  & $3.60\cdot 10^{-3}$ \\
+		                               &                                  & Batch Size              & 512                & 128                 \\
+		                               &                                  & Hidden Dim              & 256                & 1024                \\
+		                               &                                  & Num Layers              & 10                 & 5                   \\
+		                               &                                  & Time Embed Dim          & 128                & 512                 \\
+		\midrule
+		\multirow{6}{*}{Flow Matching} & \multirow{6}{*}{FFHQ (CNN)}
+		                               & Learning Rate                    &                         &                                          \\
+		                               &                                  & Weight Decay            &                    &                     \\
+		                               &                                  & Batch Size              &                    &                     \\
+		                               &                                  & Hidden Dim              &                    &                     \\
+		                               &                                  & Num Layers              &                    &                     \\
+		                               &                                  & Time Embed Dim          &                    &                     \\
+		\midrule
+		\multirow{6}{*}{Diffusion}     & \multirow{6}{*}{Two Moons (MLP)}
+		                               & Learning Rate                    & $2\cdot10^{-3}$         & $3.16\cdot10^{-3}$                       \\
+		                               &                                  & Weight Decay            & $1\cdot10^{-3}$    & $6.40\cdot10^{-3}$  \\
+		                               &                                  & Batch Size              & 512                & 512                 \\
+		                               &                                  & Hidden Dim              & 256                & 256                 \\
+		                               &                                  & Num Layers              & 10                 & 5                   \\
+		                               &                                  & Time Embed Dim          & 128                & 512                 \\
+		\midrule
+		\multirow{6}{*}{Diffusion}     & \multirow{6}{*}{FFHQ (CNN)}
+		                               & Learning Rate                    &                         &                                          \\
+		                               &                                  & Weight Decay            &                    &                     \\
+		                               &                                  & Batch Size              &                    &                     \\
+		                               &                                  & Hidden Dim              &                    &                     \\
+		                               &                                  & Num Layers              &                    &                     \\
+		                               &                                  & Time Embed Dim          &                    &                     \\
+		\bottomrule
+	\end{tabular}
+\end{table}
 
 
 \bibliographystyle{plainnat}
