@@ -265,12 +265,12 @@ def run_optimization():
     max_retries = 10
 
     if cfg.model.generative_model == "flow_matching":
-        study_name = "flowmatching_optuna_study"
+        study_name = "flowmatching_64_optuna_study"
         storage_url = cfg.main.get(
             "postgresql_url", "postgresql://x_sofan@localhost/flowmatching_study_db"
         )
     else:
-        study_name = "diffusion_optuna_study"
+        study_name = "diffusion_64_optuna_study"
         storage_url = cfg.main.get(
             "postgresql_url", "postgresql://x_sofan@localhost/diffusion_study_db"
         )
