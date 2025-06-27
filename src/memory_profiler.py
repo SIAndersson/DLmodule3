@@ -78,15 +78,7 @@ class ModelMemoryProfiler:
         if noise is None:
             noise = torch.randn_like(x_start)
 
-        if x_start.dim() == 2:
-            # 2D data case (e.g., two moons, 2D Gaussian)
-            reshape_dims = (-1, 1)
-        elif x_start.dim() == 4:
-            # 4D data case (e.g., images)
-            reshape_dims = (-1, 1, 1, 1)
-        else:
-            # General case: reshape to match all dimensions except batch
-            reshape_dims = (-1,) + (1,) * (x_start.dim() - 1)
+        reshape_dims = (-1,) + (1,) * (x_start.dim()-1))
 
         sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(

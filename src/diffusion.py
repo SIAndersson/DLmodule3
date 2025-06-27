@@ -36,11 +36,6 @@ sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
 log = logging.getLogger(__name__)
 
-def reshape_dimensions(dim):
-    dims = {2: (-1,1), 4: (-1,1,1,1)}
-    return dims.get(dim, (-1,) + (1,) * (dim-1)
-
-
 if torch.cuda.is_available():
     # Get properties of the first available GPU
     device_props = torch.cuda.get_device_properties(0)
@@ -178,7 +173,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         if noise is None:
             noise = torch.randn_like(x_start)
 
-        reshape_dims = reshape_dimensions(x_start.dim())
+        reshape_dims = (-1,) + (1,) * (x_start.dim()-1)
 
         sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
@@ -277,7 +272,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
 
         Then: x_{t-1} = μ_θ(x_t, t) + σ_t * z, where z ~ N(0, I)
         """
-        reshape_dims = reshape_dimensions(x_start.dim())
+        reshape_dims = (-1,) + (1,) * (x_start.dim()-1)
 
         betas_t = self.betas[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(

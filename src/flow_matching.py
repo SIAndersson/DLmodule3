@@ -393,15 +393,13 @@ def main(cfg: DictConfig):
     if torch.cuda.is_available():
         accelerator = "gpu"
         devices = torch.cuda.device_count()
-        strategy = "auto"
     elif torch.backends.mps.is_available():
         accelerator = "mps"
         devices = 1
-        strategy = "auto"
     else:
         accelerator = "cpu"
         devices = "auto"
-        strategy = "auto"
+
 
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
@@ -432,7 +430,7 @@ def main(cfg: DictConfig):
         max_epochs=cfg.main.max_epochs,
         accelerator=accelerator,
         devices=devices,
-        strategy=strategy,
+        strategy="auto",
         logger=mlflow_logger,
         callbacks=[tracker, model_checkpoint_callback],
         enable_progress_bar=True,
@@ -456,10 +454,7 @@ def main(cfg: DictConfig):
             model_checkpoint_callback.best_model_path
         )
         log.info("Generating samples...")
-        if (
-            cfg.main.dataset.lower() == "two_moons"
-            or cfg.main.dataset.lower() == "2d_gaussians"
-        ):
+        if cfg.main.dataset.lower() in ("two_moons", "2d_gaussians"):
             final_samples = best_model.sample(num_samples=2000)
 
             X = X_train.cpu().numpy()  # Move original data to CPU for plotting
