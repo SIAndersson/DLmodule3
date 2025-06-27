@@ -316,15 +316,15 @@ def run_optimization():
 
     # Save detailed results
     df = study.trials_dataframe()
-    df.to_csv("multiobjective_optuna_results.csv")
+    df.to_csv(f"{study_name}_multiobjective_optuna_results.csv")
 
     # Create Pareto front visualization
-    create_pareto_plot(study)
+    create_pareto_plot(study, study_name)
 
     return study
 
 
-def create_pareto_plot(study):
+def create_pareto_plot(study, study_name):
     """Create a visualization of the Pareto front"""
     try:
         import matplotlib.pyplot as plt
@@ -347,6 +347,8 @@ def create_pareto_plot(study):
         # Plot all trials
         non_pareto_train = [tl for tl, ip in zip(train_losses, is_pareto) if not ip]
         non_pareto_fid = [ef for ef, ip in zip(eval_fids, is_pareto) if not ip]
+        non_pareto_train = [x for x in non_pareto_train if x < 1e10]
+        non_pareto_fid = [x for x in non_pareto_fid if x < 1e10]
         plt.scatter(
             non_pareto_train,
             non_pareto_fid,
@@ -358,6 +360,9 @@ def create_pareto_plot(study):
         # Plot Pareto front
         pareto_train = [tl for tl, ip in zip(train_losses, is_pareto) if ip]
         pareto_fid = [ef for ef, ip in zip(eval_fids, is_pareto) if ip]
+
+        pareto_train = [x for x in pareto_train if x < 1e10]
+        pareto_fid = [x for x in pareto_fid if x < 1e10]
         plt.scatter(
             pareto_train, pareto_fid, color="red", s=100, label="Pareto front", zorder=5
         )
@@ -368,7 +373,7 @@ def create_pareto_plot(study):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig("pareto_front.pdf", dpi=300, bbox_inches="tight", format="pdf")
+        plt.savefig(f"{study_name}_pareto_front.pdf", dpi=300, bbox_inches="tight", format="pdf")
         plt.show()
 
     except ImportError:
