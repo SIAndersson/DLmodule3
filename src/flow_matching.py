@@ -455,12 +455,14 @@ def main(cfg: DictConfig):
         log.error(f"Training failed: {e}")
         return 1e10, 1e10
 
+    device = next(model.parameters()).device
+
     # Generate samples
     if cfg.main.visualization:
         log.info(f"Loading best model from {model_checkpoint_callback.best_model_path}")
         best_model = FlowMatching.load_from_checkpoint(
             model_checkpoint_callback.best_model_path
-        )
+        ).to(device)
         log.info("Generating samples...")
         if cfg.main.dataset.lower() in ("two_moons", "2d_gaussians"):
             final_samples = best_model.sample(num_samples=2000)
