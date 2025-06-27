@@ -388,9 +388,6 @@ def main(cfg: DictConfig):
     else:
         gradient_accumulation = 1
     datamodule = GenerativeDataModule(cfg, log)
-    datamodule.prepare_data()
-    datamodule.setup(stage="fit")
-    X_train = datamodule.get_original_data()
 
     # Find appropriate values
     if torch.cuda.is_available():
@@ -467,7 +464,7 @@ def main(cfg: DictConfig):
         log.info("Generating samples...")
         if cfg.main.dataset.lower() in ("two_moons", "2d_gaussians"):
             final_samples = best_model.sample(num_samples=2000)
-
+            X_train = datamodule.get_original_data()
             X = X_train.cpu().numpy()  # Move original data to CPU for plotting
             samples = (
                 final_samples.cpu().numpy()

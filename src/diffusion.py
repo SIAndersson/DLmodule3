@@ -420,9 +420,6 @@ def main(cfg: DictConfig):
     else:
         gradient_accumulation = 1
     datamodule = GenerativeDataModule(cfg, log)
-    datamodule.prepare_data()
-    datamodule.setup(stage="fit")
-    data = datamodule.get_original_data()
 
     # Initialize model
     log.info("Initializing diffusion model...")
@@ -513,6 +510,7 @@ def main(cfg: DictConfig):
         ):
             final_samples = best_model.sample((2000, 2), device)
 
+            data = datamodule.get_original_data()
             X = data.cpu().numpy()  # Move original data to CPU for plotting
             samples = (
                 final_samples.cpu().numpy()
