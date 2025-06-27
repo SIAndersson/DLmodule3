@@ -36,6 +36,11 @@ sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
 log = logging.getLogger(__name__)
 
+def reshape_dimensions(dim):
+    dims = {2: (-1,1), 4: (-1,1,1,1)}
+    return dims.get(dim, (-1,) + (1,) * (dim-1)
+
+
 if torch.cuda.is_available():
     # Get properties of the first available GPU
     device_props = torch.cuda.get_device_properties(0)
@@ -173,15 +178,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         if noise is None:
             noise = torch.randn_like(x_start)
 
-        if x_start.dim() == 2:
-            # 2D data case (e.g., two moons, 2D Gaussian)
-            reshape_dims = (-1, 1)
-        elif x_start.dim() == 4:
-            # 4D data case (e.g., images)
-            reshape_dims = (-1, 1, 1, 1)
-        else:
-            # General case: reshape to match all dimensions except batch
-            reshape_dims = (-1,) + (1,) * (x_start.dim() - 1)
+        reshape_dims = reshape_dimensions(x_start.dim())
 
         sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
@@ -280,15 +277,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
 
         Then: x_{t-1} = μ_θ(x_t, t) + σ_t * z, where z ~ N(0, I)
         """
-        if x.dim() == 2:
-            # 2D data case (e.g., two moons, 2D Gaussian)
-            reshape_dims = (-1, 1)
-        elif x.dim() == 4:
-            # 4D data case (e.g., images)
-            reshape_dims = (-1, 1, 1, 1)
-        else:
-            # General case: reshape to match all dimensions except batch
-            reshape_dims = (-1,) + (1,) * (x.dim() - 1)
+        reshape_dims = reshape_dimensions(x_start.dim())
 
         betas_t = self.betas[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
@@ -344,12 +333,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         )
 
         # Handle dimensions for broadcasting
-        if x_t.dim() == 2:
-            reshape_dims = (-1, 1)
-        elif x_t.dim() == 4:
-            reshape_dims = (-1, 1, 1, 1)
-        else:
-            reshape_dims = (-1,) + (1,) * (x_t.dim() - 1)
+        reshape_dims = (-1,) + (1,) * (x.dim() - 1)
 
         # Get alpha values
         alpha_t = self.alphas_cumprod[t_batch].reshape(*reshape_dims)
@@ -453,15 +437,14 @@ def main(cfg: DictConfig):
     if torch.cuda.is_available():
         accelerator = "gpu"
         devices = torch.cuda.device_count()
-        strategy = "auto"
     elif torch.backends.mps.is_available():
         accelerator = "mps"
         devices = 1
-        strategy = "auto"
     else:
         accelerator = "cpu"
         devices = "auto"
-        strategy = "auto"
+
+    strategy = "auto"
 
     # Train model
     log.info("Training model...")
