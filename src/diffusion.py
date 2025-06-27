@@ -534,8 +534,8 @@ def main(cfg: DictConfig):
 
             visualize_diffusion_process(best_model, final_samples)
         else:
-            # Use DDIM sampler for large dataset so it doesn't take a million years
-            final_samples = best_model.ddim_sample((16, 3, 256, 256), device)
+            # Use full sampler for large dataset for proper results
+            final_samples = best_model.sample((16, 3, 256, 256), device)
 
             # Save generated samples
             save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
