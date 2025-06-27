@@ -3,6 +3,8 @@ import os
 import random
 from pathlib import Path
 
+import h5py
+import numpy as np
 import math
 from tqdm import tqdm
 import pytorch_lightning as pl
@@ -20,7 +22,7 @@ HF_DATASETS_CACHE = os.getenv("HF_DATASETS_CACHE")
 
 
 def load_huggingface_data(
-    dataset_name: str, logger, test: bool = False
+    dataset_name: str, logger, test: bool = False, use_h5: bool = False
 ) -> torch.Tensor:
     """
     Load a dataset from Huggingface and transform it into a PyTorch Dataset
@@ -37,13 +39,18 @@ def load_huggingface_data(
     filename = dataset_base
     if test:
         filename += "_test"
-    save_path = Path(__file__).parent.parent.parent / "data" / f"{filename}.pt"
+    save_path = Path(__file__).parent.parent.parent / "data" / f"{filename}.{'h5' if use_h5 else 'pt'}"
 
     # Check if dataset file exists
     if save_path.exists():
         logger.info(f"Loading dataset tensor from {save_path}")
-        all_tensors = torch.load(save_path)
-        return all_tensors
+        if use_h5:
+            with h5py.File(save_path, 'r') as f:
+                data = f['images'][:]
+                return torch.from_numpy(data)
+        else:
+            all_tensors = torch.load(save_path)
+            return all_tensors
 
     # Load dataset from Huggingface
     dataset = load_dataset(
@@ -110,7 +117,13 @@ def load_huggingface_data(
 
     # Save tensor to data directory
     logger.info(f"Saving dataset to {save_path}...")
-    torch.save(all_tensors, save_path)
+    if use_h5:
+        # Convert to numpy for saving
+        numpy_data = all_tensors.cpu().numpy()
+        with h5py.File(save_path, 'w') as f:
+            f.create_dataset('images', data=numpy_data, compression='gzip', compression_opts=1)
+    else:
+        torch.save(all_tensors, save_path)
     logger.info(f"Dataset saved successfully!")
 
     logger.info(f"Final tensor - Shape: {all_tensors.shape}, Min: {all_tensors.min():.3f}, Max: {all_tensors.max():.3f}")
@@ -153,7 +166,7 @@ def create_dataset(cfg: DictConfig, log: logging.Logger):
     elif cfg.main.dataset.lower() == "ffhq":
         dataset_name = "bitmind/ffhq-256"
         log.info(f"Loading dataset: {dataset_name}")
-        return load_huggingface_data(dataset_name, log, cfg.main.test)
+        return load_huggingface_data(dataset_name, log, cfg.main.test, cfg.main.get("use_h5", False))
     else:
         raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
 

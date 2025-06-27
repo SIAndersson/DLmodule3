@@ -27,6 +27,7 @@ dependencies = [
     "pymysql>=1.1.1",
     "psycopg2-binary>=2.9.10",
     "pyyaml>=6.0.2",
+    "h5py>=3.14.0",
 ]
 
 [tool.uv]
