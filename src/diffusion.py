@@ -455,6 +455,7 @@ def main(cfg: DictConfig):
     )
     callbacks = [tracker, model_checkpoint_callback]
     if cfg.main.get("early_stopping", False):
+        log.info("Adding early stopping callback...")
         early_stopping_callback = create_early_stopping_callback(patience=50)
         callbacks.append(early_stopping_callback)
 
