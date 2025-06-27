@@ -88,12 +88,12 @@ We begin by implementing two variants of Flow Matching models as well as two var
 		                               &                                  & Time Embed Dim          & 128                & 512                 \\
 		\midrule
 		\multirow{6}{*}{Flow Matching} & \multirow{6}{*}{FFHQ (CNN)}
-		                               & Learning Rate                    &                         &                                          \\
-		                               &                                  & Weight Decay            &                    &                     \\
-		                               &                                  & Batch Size              &                    &                     \\
-		                               &                                  & Hidden Dim              &                    &                     \\
-		                               &                                  & Num Layers              &                    &                     \\
-		                               &                                  & Time Embed Dim          &                    &                     \\
+		                               & Learning Rate                    & $2\cdot10^{-3}$         &                                          \\
+		                               &                                  & Weight Decay            & $1\cdot10^{-3}$    &                     \\
+		                               &                                  & Batch Size              & 256                &                     \\
+		                               &                                  & Hidden Dim              & 256                &                     \\
+		                               &                                  & Num CNN stacks          & 1                  &                     \\
+		                               &                                  & Time Embed Dim          & 128                &                     \\
 		\midrule
 		\multirow{6}{*}{Diffusion}     & \multirow{6}{*}{Two Moons (MLP)}
 		                               & Learning Rate                    & $2\cdot10^{-3}$         & $3.16\cdot10^{-3}$                       \\
@@ -104,12 +104,12 @@ We begin by implementing two variants of Flow Matching models as well as two var
 		                               &                                  & Time Embed Dim          & 128                & 512                 \\
 		\midrule
 		\multirow{6}{*}{Diffusion}     & \multirow{6}{*}{FFHQ (CNN)}
-		                               & Learning Rate                    &                         &                                          \\
-		                               &                                  & Weight Decay            &                    &                     \\
-		                               &                                  & Batch Size              &                    &                     \\
-		                               &                                  & Hidden Dim              &                    &                     \\
-		                               &                                  & Num Layers              &                    &                     \\
-		                               &                                  & Time Embed Dim          &                    &                     \\
+		                               & Learning Rate                    & $2\cdot10^{-3}$         &                                          \\
+		                               &                                  & Weight Decay            & $1\cdot10^{-3}$    &                     \\
+		                               &                                  & Batch Size              & 256                &                     \\
+		                               &                                  & Hidden Dim              & 256                &                     \\
+		                               &                                  & Num CNN Stacks          & 1                  &                     \\
+		                               &                                  & Time Embed Dim          & 128                &                     \\
 		\bottomrule
 	\end{tabular}
 \end{table}
