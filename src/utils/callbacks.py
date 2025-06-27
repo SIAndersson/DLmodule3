@@ -709,7 +709,28 @@ def create_evaluation_config(
             "k_nearest": 5,
             "mmd_kernel": "rbf",
         }
-
+    elif evaluation_level == "rarely":
+        # Small and occasional suite
+        return {
+            "logger": log,
+            "model_type": model_type,
+            "dataset_type": data_type,
+            "eval_every_n_epochs": 100 if data_type == "image" else 50,
+            "num_samples": 500,
+            "feature_extractor": "mobilenet" if data_type == "image" else None,
+            "cache_dir": "./weights",
+            "compute_coverage_precision": True,
+            "compute_mmd": True,
+            "compute_wasserstein": False,
+            "compute_js_divergence": False,
+            "compute_energy_distance": False,
+            "compute_density_consistency": False,
+            "compute_mode_collapse": False,
+            "compute_diversity_metrics": False,
+            "compute_fid": True if data_type == "image" else False,
+            "k_nearest": 5,
+            "mmd_kernel": "rbf",
+        }
     else:  # 'standard'
         if data_type == "image":
             return {
