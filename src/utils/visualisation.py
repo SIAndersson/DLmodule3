@@ -12,8 +12,8 @@ import torchvision
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 plt.rcParams["figure.dpi"] = 100
 plt.rcParams["savefig.dpi"] = 300
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams['pdf.use14corefonts'] = True
+#plt.rcParams['svg.fonttype'] = 'none'
+#plt.rcParams['pdf.use14corefonts'] = True
 
 
 def plot_evaluation_metrics(

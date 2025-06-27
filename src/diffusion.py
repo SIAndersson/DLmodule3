@@ -272,7 +272,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
 
         Then: x_{t-1} = μ_θ(x_t, t) + σ_t * z, where z ~ N(0, I)
         """
-        reshape_dims = (-1,) + (1,) * (x_start.dim()-1)
+        reshape_dims = (-1,) + (1,) * (x.dim()-1)
 
         betas_t = self.betas[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
