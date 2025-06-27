@@ -3,6 +3,12 @@
 \usepackage[numbers]{natbib} % Numeric references
 \usepackage{hyperref}
 \usepackage[utf8]{inputenc}
+\usepackage{multirow}
+\usepackage{booktabs}
+\usepackage{float}
+
+
+
 %\usepackage[ backend=biber, style=numeric, ]{biblatex}
 
 \hypersetup{
@@ -63,7 +69,7 @@ We begin by implementing two variants of Flow Matching models as well as two var
 
 \paragraph{Two-moons} is a synthetic toy dataset to visualize and benchmark classification and generation, designed to be non-trivial and require higher-order models.
 
-\paragraph{FFHQ} is a dataset of high-quality images of faces from flicker. It is used as a traning set and to benchmark generative models.
+\paragraph{FFHQ} is an open dataset of high-quality images of faces from the online photo-sharing site Flickr. It is used as a traning set and to benchmark generative models.
 
 \subsection{Metrics}
 
@@ -80,10 +86,10 @@ We begin by implementing two variants of Flow Matching models as well as two var
 \section{Results}
 
 
-\begin{table}[h]
+\begin{table}[H]
 	\centering
 	\caption{Naive and Optuna-optimized hyperparameters for Flow Matching and Diffusion models on Two Moons (MLP) and FFHQ (CNN).}
-	\begin{tabular}{llcccc}
+	\begin{tabular}{lllrrr}
 		\toprule
 		\textbf{Model}                 & \textbf{Dataset}                 & \textbf{Hyperparameter} & \textbf{Naive}     & \textbf{Optimized}  \\
 		\midrule
