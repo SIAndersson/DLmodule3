@@ -528,15 +528,18 @@ def main(cfg: DictConfig):
             save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())
             plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
         # Final evaluation
-        final_metrics = model.run_final_evaluation(final_samples)
-        repo_root = Path(__file__).parent.parent
-        output_path = repo_root / "evaluation_plots"
-        output_path.mkdir(parents=True, exist_ok=True)
-        fig = plot_final_metrics(
-            final_metrics,
-            save_path=output_path / f"diffusion_{cfg.main.dataset}_{extra_name}_final_metrics.pdf",
-        )
-        plt.close(fig)
+        try:
+            final_metrics = model.run_final_evaluation(final_samples.to(model.device))
+            repo_root = Path(__file__).parent.parent
+            output_path = repo_root / "evaluation_plots"
+            output_path.mkdir(parents=True, exist_ok=True)
+            fig = plot_final_metrics(
+                final_metrics,
+                save_path=output_path / f"diffusion_{cfg.main.dataset}_{extra_name}_final_metrics.pdf",
+            )
+            plt.close(fig)
+        except Exception as e:
+            log.error(f"Error during final evaluation: {e}. Skipping.")
 
     # Save metrics history
     metrics_history = model.get_metrics_history()
