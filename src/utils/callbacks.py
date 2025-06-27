@@ -637,7 +637,7 @@ class EvaluationMixin:
 
         print("Running final evaluation...")
         metrics = self.evaluator.evaluate(
-            self, self.device, generated_samples=generated_samples
+            self, self.device, generated_samples=generated_samples.to(self.device)
         )
 
         # Pretty print the results
