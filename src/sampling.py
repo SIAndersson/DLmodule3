@@ -38,6 +38,7 @@ from utils.visualisation import (
 )
 
 from diffusion import DiffusionModel
+from flow_matching import FlowMatching
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 
