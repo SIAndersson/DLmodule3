@@ -482,9 +482,9 @@ def main(cfg: DictConfig):
             save_image_samples(final_samples, "flow_matching", cfg.main.dataset.lower())
             plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
         # Final evaluation
-        print(final_samples.device)
-        print(model.device)
-        final_metrics = model.run_final_evaluation(final_samples)
+        log.info(final_samples.device)
+        log.info(model.device)
+        final_metrics = model.run_final_evaluation(final_samples.to(model.device))
         repo_root = Path(__file__).parent.parent
         output_path = repo_root / "evaluation_plots"
         output_path.mkdir(parents=True, exist_ok=True)
