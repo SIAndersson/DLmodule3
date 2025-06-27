@@ -467,7 +467,7 @@ def main(cfg: DictConfig):
     log.info("Training model...")
     tracker = MetricTracker()
     model_checkpoint_callback = create_model_checkpoint_callback(
-        model_name="diffusion", dataset_type=cfg.main.dataset.lower()
+        model_name="diffusion", dataset_type=cfg.main.dataset.lower(), extra_name=cfg.main.get("extra_name", "default")
     )
     early_stopping_callback = create_early_stopping_callback(patience=50)
 

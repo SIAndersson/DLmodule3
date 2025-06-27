@@ -755,10 +755,22 @@ def create_evaluation_config(
             }
 
 
-def create_model_checkpoint_callback(model_name, dataset_type):
-    os.makedirs(f"./model_checkpoints/{model_name}/{dataset_type}", exist_ok=True)
+def create_model_checkpoint_callback(model_name, dataset_type, extra_name=""):
+    # Get the repo root by going up from utils folder to src, then to repo root
+    repo_root = Path(__file__).parent.parent.parent
+
+    # Build the checkpoint path
+    checkpoint_path = repo_root / "model_checkpoints" / model_name / dataset_type
+
+    # Extra name, basically if it's optim or default
+    if extra_name:
+        checkpoint_path = checkpoint_path / extra_name
+
+    # Create directory if it doesn't exist
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+
     return ModelCheckpoint(
-        dirpath=f"./model_checkpoints/{model_name}/{dataset_type}",
+        dirpath=str(checkpoint_path),  # Convert Path to string for ModelCheckpoint
         filename="{epoch}-{train_loss:.2f}",
         save_top_k=1,
         monitor="train_loss",

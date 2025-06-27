@@ -214,9 +214,13 @@ multirun/
 data/
 weights/
 evaluation_plots/
+eval_outputs/
 model_checkpoints/
 checkpoints/
 multi_seed_results/
+# Only ignore root directory pngs
+/*.png
+
 
 # Tex stuff
 *.acn
