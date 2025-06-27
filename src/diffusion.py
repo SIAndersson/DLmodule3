@@ -328,7 +328,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         )
 
         # Handle dimensions for broadcasting
-        reshape_dims = (-1,) + (1,) * (x.dim() - 1)
+        reshape_dims = (-1,) + (1,) * (x_t.dim() - 1)
 
         # Get alpha values
         alpha_t = self.alphas_cumprod[t_batch].reshape(*reshape_dims)
