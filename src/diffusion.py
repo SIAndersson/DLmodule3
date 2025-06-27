@@ -310,10 +310,24 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         """
         # Start from pure noise
         x = torch.randn(shape, device=device)
+        return self.sample_from_noise(x, device)
+
+    @torch.no_grad()
+    def sample_from_noise(self, noise, device):
+        """
+        Full reverse diffusion: generate samples by iterating from T to 0
+
+        Algorithm:
+        1. Start with x_T ~ N(0, I)
+        2. For t = T-1, ..., 0: x_t = p_sample(x_{t+1}, t+1)
+        3. Return x_0
+        """
+        # Start from pure noise
+        x = noise.to(device)
 
         # Reverse diffusion process
         for i in reversed(range(self.num_timesteps)):
-            t = torch.full((shape[0],), i, device=device, dtype=torch.long)
+            t = torch.full((x.shape[0],), i, device=device, dtype=torch.long)
             x = self.p_sample(x, t)
 
         return x
@@ -521,7 +535,7 @@ def main(cfg: DictConfig):
             visualize_diffusion_process(best_model, final_samples)
         else:
             # Use full sampler for large dataset for proper results
-            final_samples = best_model.sample((16, 3, 256, 256), device)
+            final_samples = best_model.sample((16, 3, 64, 64), device)
 
             # Save generated samples
             save_image_samples(final_samples, "diffusion", cfg.main.dataset.lower())

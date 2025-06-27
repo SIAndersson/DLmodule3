@@ -164,7 +164,7 @@ def create_dataset(cfg: DictConfig, log: logging.Logger):
         log.info("Creating 2D Gaussian mixture dataset...")
         return create_2d_dataset(cfg.main.num_samples)
     elif cfg.main.dataset.lower() == "ffhq":
-        dataset_name = "bitmind/ffhq-256"
+        dataset_name = "Dmini/FFHQ-64x64"
         log.info(f"Loading dataset: {dataset_name}")
         return load_huggingface_data(dataset_name, log, cfg.main.test, cfg.main.get("use_h5", False))
     else:
@@ -184,7 +184,7 @@ class GenerativeDataModule(pl.LightningDataModule):
             self.cfg.main.dataset.lower() != "two_moons"
             and self.cfg.main.dataset.lower() != "2d_gaussians"
         ):
-            dataset_name = "bitmind/ffhq-256"
+            dataset_name = "Dmini/FFHQ-64x64"
             self.logger.info(f"Preparing data for {dataset_name}.")
             dataset_base = dataset_name.split("/")[-1]
             filename = dataset_base

@@ -275,7 +275,12 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
             x = torch.randn(num_samples, self.dim, device=device)
         else:
             x = torch.randn(num_samples, *self.dim, device=device)
+        return self.sample_from_noise(x, device)
+        
 
+    @torch.no_grad()
+    def sample_from_noise(self, noise, device):
+        x = noise.to(device)
         # Integration parameters
         dt = 1.0 / self.num_steps
 
