@@ -118,7 +118,7 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
                 num_layers=self.num_layers,
                 model_type="vector_field",
             )
-            self.dim = (3, 256, 256)
+            self.dim = (3, 64, 64)
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
