@@ -548,7 +548,7 @@ def main(cfg: DictConfig):
         fig = plot_evaluation_metrics(
             metrics_history,
             "diffusion",
-            save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.png",
+            save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.pdf",
         )
         plt.close()
 

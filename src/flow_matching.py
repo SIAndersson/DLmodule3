@@ -484,7 +484,7 @@ def main(cfg: DictConfig):
         fig = plot_evaluation_metrics(
             metrics_history,
             "vector_field",
-            save_path=f"flow_matching_{cfg.main.dataset}_metrics.png",
+            save_path=f"flow_matching_{cfg.main.dataset}_metrics.pdf",
         )
         plt.close()
 

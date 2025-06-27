@@ -12,6 +12,8 @@ import torchvision
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 plt.rcParams["figure.dpi"] = 100
 plt.rcParams["savefig.dpi"] = 300
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams['pdf.use14corefonts'] = True
 
 
 def plot_evaluation_metrics(
@@ -244,7 +246,7 @@ def plot_evaluation_metrics(
         eval_dir = root_dir / "evaluation_plots"
         eval_dir.mkdir(exist_ok=True)
         save_file = eval_dir / save_path
-        plt.savefig(save_file, dpi=dpi, bbox_inches="tight", facecolor="white")
+        plt.savefig(save_file, dpi=dpi, bbox_inches="tight", facecolor="white", format='pdf')
         print(f"Figure saved to: {save_file}")
 
     return fig
@@ -380,9 +382,9 @@ def save_2d_samples(samples, X, tracker, model_name, dataset):
     root_dir = Path(__file__).resolve().parent.parent.parent
     eval_dir = root_dir / "evaluation_plots"
     eval_dir.mkdir(exist_ok=True)
-    save_file = eval_dir / f"{model_name}_{dataset}_results.png"
+    save_file = eval_dir / f"{model_name}_{dataset}_results.pdf"
 
-    plt.savefig(save_file, dpi=300, bbox_inches="tight")
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
     plt.show()
 
 
@@ -415,8 +417,8 @@ def visualize_diffusion_process(model, samples):
     root_dir = Path(__file__).resolve().parent.parent.parent
     eval_dir = root_dir / "evaluation_plots"
     eval_dir.mkdir(exist_ok=True)
-    save_file = eval_dir / "diffusion_forward_process.png"
-    plt.savefig(save_file, dpi=300, bbox_inches="tight")
+    save_file = eval_dir / "diffusion_forward_process.pdf"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
     plt.show()
 
 
@@ -445,6 +447,6 @@ def plot_loss_function(tracker, model_name, dataset):
     root_dir = Path(__file__).resolve().parent.parent.parent
     eval_dir = root_dir / "evaluation_plots"
     eval_dir.mkdir(exist_ok=True)
-    save_file = eval_dir / f"{model_name}_{dataset}_loss_function.png"
-    plt.savefig(save_file, dpi=300, bbox_inches="tight")
+    save_file = eval_dir / f"{model_name}_{dataset}_loss_function.pdf"
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
     plt.show()

@@ -551,7 +551,7 @@ class ModelMemoryProfiler:
         plt.tight_layout()
 
         if save_path:
-            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+            plt.savefig(save_path, dpi=300, bbox_inches="tight", format='pdf')
             print(f"Plot saved to {save_path}")
 
         plt.show()
@@ -662,7 +662,7 @@ class ModelMemoryProfiler:
         ax.set_title("Model Memory Usage (MB)")
         fig.colorbar(sc, ax=ax, label="Memory (MB)")
         plt.legend()
-        plt.savefig("3d_memory_usage.png", dpi=300)
+        plt.savefig("3d_memory_usage.pdf", dpi=300, format='pdf')
         plt.close()
 
 
@@ -683,7 +683,7 @@ if __name__ == "__main__":
 
     # For demonstration, using a placeholder
     df = profiler.run_parameter_sweep(hidden_dims, num_layers_list, batch_sizes)
-    profiler.plot_results(df, "memory_analysis.png")
+    profiler.plot_results(df, "memory_analysis.pdf")
     profiler.save_results(df, "memory_results.csv")
     profiler.print_summary(df)
     profiler.plot_3d_results(df)
