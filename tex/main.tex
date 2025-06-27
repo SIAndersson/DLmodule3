@@ -77,9 +77,9 @@ We begin by implementing two variants of Flow Matching models as well as two var
 
 \paragraph{Distance entropy}
 
-\paragraph{Coverage}
+\paragraph{Coverage} builds nearest neighbour manifolds around real samples and measures the ratio of the real samplesthat has fake samples in their neighborhood. \cite{naeem2020reliablefidelitydiversitymetrics}
 
-\paragraph{Precision}
+\paragraph{Precision} is the probability that a generated artifact falls whithin in the support of the distribution of real artifacts. \cite{kynk2019}
 
 \paragraph{Fréchet inception distance} (FID) uses the Fréchet distance combined with activations from Inception v3 and is shown to correlate negatively against quality in images.\cite{yu2021frechet} 
 
@@ -91,7 +91,7 @@ We begin by implementing two variants of Flow Matching models as well as two var
 	\caption{Naive and Optuna-optimized hyperparameters for Flow Matching and Diffusion models on Two Moons (MLP) and FFHQ (CNN).}
 	\begin{tabular}{lllrrr}
 		\toprule
-		\textbf{Model}                 & \textbf{Dataset}                 & \textbf{Hyperparameter} & \textbf{Naive}     & \textbf{Optimized}  \\
+		\textbf{Model}                 & \textbf{Dataset}                 & \textbf{Hyperparameter} & \textbf{Naïve}     & \textbf{Optimized}  \\
 		\midrule
 		\multirow{6}{*}{Flow Matching} & \multirow{6}{*}{Two Moons (MLP)}
 		                               & Learning Rate                    & $2\cdot10^{-3}$         & $1.03\cdot10^{-3}$                       \\
