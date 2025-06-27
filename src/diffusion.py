@@ -2,6 +2,8 @@ import logging
 import os
 from typing import Dict
 
+from pathlib import Path
+import yaml
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,6 +32,7 @@ from utils.visualisation import (
     save_2d_samples,
     save_image_samples,
     visualize_diffusion_process,
+    plot_final_metrics,
 )
 
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
@@ -173,7 +176,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         if noise is None:
             noise = torch.randn_like(x_start)
 
-        reshape_dims = (-1,) + (1,) * (x_start.dim()-1)
+        reshape_dims = (-1,) + (1,) * (x_start.dim() - 1)
 
         sqrt_alphas_cumprod_t = self.sqrt_alphas_cumprod[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
@@ -272,7 +275,7 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
 
         Then: x_{t-1} = μ_θ(x_t, t) + σ_t * z, where z ~ N(0, I)
         """
-        reshape_dims = (-1,) + (1,) * (x.dim()-1)
+        reshape_dims = (-1,) + (1,) * (x.dim() - 1)
 
         betas_t = self.betas[t].reshape(*reshape_dims)
         sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t].reshape(
@@ -443,9 +446,12 @@ def main(cfg: DictConfig):
 
     # Train model
     log.info("Training model...")
+    extra_name = cfg.main.get("extra_name", "default")
     tracker = MetricTracker()
     model_checkpoint_callback = create_model_checkpoint_callback(
-        model_name="diffusion", dataset_type=cfg.main.dataset.lower(), extra_name=cfg.main.get("extra_name", "default")
+        model_name="diffusion",
+        dataset_type=cfg.main.dataset.lower(),
+        extra_name=extra_name,
     )
     early_stopping_callback = create_early_stopping_callback(patience=50)
 
@@ -520,13 +526,30 @@ def main(cfg: DictConfig):
             plot_loss_function(tracker, "diffusion", cfg.main.dataset.lower())
         # Final evaluation
         final_metrics = model.run_final_evaluation(final_samples)
+        repo_root = Path(__file__).parent.parent
+        output_path = repo_root / "evaluation_plots"
+        output_path.mkdir(parents=True, exist_ok=True)
+        fig = plot_final_metrics(
+            final_metrics,
+            save_path=output_path / f"diffusion_{cfg.main.dataset}_{extra_name}_final_metrics.pdf",
+        )
+        plt.close(fig)
 
+    # Save metrics history
     metrics_history = model.get_metrics_history()
+    repo_root = Path(__file__).parent.parent
+    output_path = repo_root / "eval_outputs"
+    output_path.mkdir(parents=True, exist_ok=True)
+    with open(
+        output_path / f"diffusion_{cfg.main.dataset}_{extra_name}_metrics_history.yaml", "w"
+    ) as file:
+        yaml.dump(metrics_history, file)
+
     if cfg.main.visualization:
         fig = plot_evaluation_metrics(
             metrics_history,
             "diffusion",
-            save_path=f"diffusion_{cfg.main.dataset}_metrics_dashboard.pdf",
+            save_path=f"diffusion_{cfg.main.dataset}_{extra_name}_metrics_dashboard.pdf",
         )
         plt.close()
 

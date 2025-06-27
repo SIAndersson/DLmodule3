@@ -138,7 +138,7 @@ def save_multi_seed_2d_samples(
     eval_dir = root_dir / "multi_seed_results" / "evaluation_plots"
     eval_dir.mkdir(parents=True, exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_multi_seed_results_{extra_name}.pdf"
-    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format="pdf")
     plt.show()
 
     return fig
@@ -195,7 +195,7 @@ def save_seed_comparison_metrics(
     eval_dir = root_dir / "multi_seed_results" / "evaluation_plots"
     eval_dir.mkdir(parents=True, exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_metrics_comparison_{extra_name}.pdf"
-    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format="pdf")
     plt.show()
 
     return fig

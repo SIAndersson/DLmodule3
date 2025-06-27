@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,13 +7,193 @@ import pandas as pd
 import seaborn as sns
 import torch
 import torchvision
+import math
 
 # Set the aesthetic style
 sns.set_theme(style="whitegrid", context="talk", font="DejaVu Sans")
 plt.rcParams["figure.dpi"] = 100
 plt.rcParams["savefig.dpi"] = 300
-#plt.rcParams['svg.fonttype'] = 'none'
-#plt.rcParams['pdf.use14corefonts'] = True
+# plt.rcParams['svg.fonttype'] = 'none'
+# plt.rcParams['pdf.use14corefonts'] = True
+
+
+def plot_final_metrics(
+    metrics_dict: Dict[str, Union[float, int]],
+    title: str = "Metrics Overview",
+    figsize: Optional[Tuple[int, int]] = None,
+    palette: str = "husl",
+    save_path: Optional[str] = None,
+    show_values: bool = True,
+    sort_by: str = "name",  # "value", "name", or "none"
+    layout: str = "auto",  # "auto", "horizontal", "vertical", "grid"
+) -> plt.Figure:
+    """
+    Create a comprehensive visualization of metrics from a dictionary.
+
+    Parameters:
+    -----------
+    metrics_dict : dict
+        Dictionary with metric names as keys and numeric values as values
+    title : str
+        Title for the overall plot
+    figsize : tuple, optional
+        Figure size (width, height). If None, automatically determined
+    palette : str
+        Color palette for the plots
+    save_path : str, optional
+        Path to save the figure. If None, figure is not saved
+    show_values : bool
+        Whether to display values on the bars
+    sort_by : str
+        How to sort metrics: 'value' (descending), 'name' (alphabetical), 'none'
+    layout : str
+        Layout style: 'auto', 'horizontal', 'vertical', 'grid'
+
+    Returns:
+    --------
+    matplotlib.figure.Figure
+        The created figure object
+    """
+
+    # Validate input
+    if not metrics_dict:
+        raise ValueError("metrics_dict cannot be empty")
+
+    # Convert to DataFrame for easier manipulation
+    df = pd.DataFrame(list(metrics_dict.items()), columns=["Metric", "Value"])
+
+    # Handle sorting
+    if sort_by == "value":
+        df = df.sort_values("Value", ascending=False)
+    elif sort_by == "name":
+        df = df.sort_values("Metric")
+    # If sort_by == "none", keep original order
+
+    # Determine layout and figure size
+    n_metrics = len(df)
+
+    if layout == "auto":
+        if n_metrics <= 3:
+            layout = "horizontal"
+        elif n_metrics <= 8:
+            layout = "vertical"
+        else:
+            layout = "grid"
+
+    # Calculate figure size if not provided
+    if figsize is None:
+        if layout == "horizontal":
+            figsize = (max(8, n_metrics * 1.5), 6)
+        elif layout == "vertical":
+            figsize = (10, max(6, n_metrics * 0.8))
+        else:  # grid
+            cols = min(3, n_metrics)
+            rows = math.ceil(n_metrics / cols)
+            figsize = (cols * 4, rows * 3)
+
+    # Create figure
+    fig = plt.figure(figsize=figsize)
+
+    if layout in ["horizontal", "vertical"]:
+        # Single subplot with bar chart
+        ax = fig.add_subplot(111)
+
+        # Create bar plot
+        if layout == "horizontal":
+            bars = sns.barplot(data=df, x="Value", y="Metric", palette=palette, ax=ax)
+
+            # Add value labels
+            if show_values:
+                for i, bar in enumerate(bars.patches):
+                    width = bar.get_width()
+                    ax.text(
+                        width + max(df["Value"]) * 0.01,
+                        bar.get_y() + bar.get_height() / 2,
+                        f"{width:.3f}",
+                        ha="left",
+                        va="center",
+                        fontweight="bold",
+                    )
+        else:  # vertical
+            bars = sns.barplot(data=df, x="Metric", y="Value", palette=palette, ax=ax)
+
+            # Rotate x-axis labels if needed
+            if any(len(str(metric)) > 8 for metric in df["Metric"]):
+                plt.xticks(rotation=45, ha="right")
+
+            # Add value labels
+            if show_values:
+                for i, bar in enumerate(bars.patches):
+                    height = bar.get_height()
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        height + max(df["Value"]) * 0.01,
+                        f"{height:.3f}",
+                        ha="center",
+                        va="bottom",
+                        fontweight="bold",
+                    )
+
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=20)
+
+    else:  # grid layout
+        cols = min(3, n_metrics)
+        rows = math.ceil(n_metrics / cols)
+
+        # Create subplots
+        fig, axes = plt.subplots(rows, cols, figsize=figsize)
+        if rows == 1 and cols == 1:
+            axes = [axes]
+        elif rows == 1 or cols == 1:
+            axes = axes.flatten()
+        else:
+            axes = axes.flatten()
+
+        # Plot each metric
+        colors = sns.color_palette(palette, n_metrics)
+
+        for i, (_, row) in enumerate(df.iterrows()):
+            ax = axes[i]
+
+            # Create a simple bar for each metric
+            bar = ax.bar([0], [row["Value"]], color=colors[i], width=0.6)
+
+            # Customize subplot
+            ax.set_title(row["Metric"], fontweight="bold", fontsize=12)
+            ax.set_xticks([])
+            ax.set_ylabel("Value")
+
+            # Add value label
+            if show_values:
+                ax.text(
+                    0,
+                    row["Value"] + row["Value"] * 0.05,
+                    f"{row['Value']:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontweight="bold",
+                )
+
+            # Set y-axis to start from 0 or minimum value
+            y_min = min(0, row["Value"] * 1.1) if row["Value"] < 0 else 0
+            y_max = row["Value"] * 1.2 if row["Value"] > 0 else row["Value"] * 0.8
+            ax.set_ylim(y_min, y_max)
+
+        # Hide empty subplots
+        for i in range(n_metrics, len(axes)):
+            axes[i].set_visible(False)
+
+        # Add main title
+        fig.suptitle(title, fontsize=16, fontweight="bold", y=0.98)
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Save if path provided
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
+    return fig
 
 
 def plot_evaluation_metrics(
@@ -246,7 +426,9 @@ def plot_evaluation_metrics(
         eval_dir = root_dir / "evaluation_plots"
         eval_dir.mkdir(exist_ok=True)
         save_file = eval_dir / save_path
-        plt.savefig(save_file, dpi=dpi, bbox_inches="tight", facecolor="white", format='pdf')
+        plt.savefig(
+            save_file, dpi=dpi, bbox_inches="tight", facecolor="white", format="pdf"
+        )
         print(f"Figure saved to: {save_file}")
 
     return fig
@@ -384,7 +566,7 @@ def save_2d_samples(samples, X, tracker, model_name, dataset):
     eval_dir.mkdir(exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_results.pdf"
 
-    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format="pdf")
     plt.show()
 
 
@@ -418,7 +600,7 @@ def visualize_diffusion_process(model, samples):
     eval_dir = root_dir / "evaluation_plots"
     eval_dir.mkdir(exist_ok=True)
     save_file = eval_dir / "diffusion_forward_process.pdf"
-    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format="pdf")
     plt.show()
 
 
@@ -448,5 +630,5 @@ def plot_loss_function(tracker, model_name, dataset):
     eval_dir = root_dir / "evaluation_plots"
     eval_dir.mkdir(exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_loss_function.pdf"
-    plt.savefig(save_file, dpi=300, bbox_inches="tight", format='pdf')
+    plt.savefig(save_file, dpi=300, bbox_inches="tight", format="pdf")
     plt.show()

@@ -3,6 +3,8 @@ import os
 import random
 from pathlib import Path
 
+import math
+from tqdm import tqdm
 import pytorch_lightning as pl
 import torch
 from datasets import load_dataset
@@ -80,23 +82,38 @@ def load_huggingface_data(
         batched=True,
         remove_columns=["image"],
         batch_size=1000,
-        num_proc=4,
+        num_proc=10,
     )
 
     logger.info("Dataset transformed.")
+    dataset.set_format(type="torch", columns=["pixel_values"])
 
-    # Get all pixel values and stack them
-    all_pixel_values = dataset["pixel_values"]
+    logger.info("Dataset transformed.")
 
-    # Concatenate all batches into a single tensor
-    all_tensors = torch.tensor(all_pixel_values)  # Final shape (N, C, H, W)
+    N = len(dataset)
 
-    # Save tensor to ./data directory
+    sample_batch = dataset[0:1]["pixel_values"]
+    _, C, H, W = sample_batch.shape
+    dtype  = sample_batch.dtype
+    device = sample_batch.device
+
+    all_tensors = torch.empty((N, C, H, W), dtype=dtype, device=device)
+
+    chunk_size = 1000
+    num_chunks = math.ceil(N / chunk_size)
+
+    for i in tqdm(range(num_chunks), desc="Loading in dataset..."):
+        start = i * chunk_size
+        end   = min(start + chunk_size, N)
+        chunk_tensor = dataset[start:end]["pixel_values"]
+        all_tensors[start:end] = chunk_tensor
+
+    # Save tensor to data directory
+    logger.info(f"Saving dataset to {save_path}...")
     torch.save(all_tensors, save_path)
-    logger.info(f"Generated dataset saved to {save_path}.")
+    logger.info(f"Dataset saved successfully!")
 
-    logger.info(f"Min: {all_tensors.min()}, Max: {all_tensors.max()}")
-    logger.debug(f"Final shape: {all_tensors.shape}")
+    logger.info(f"Final tensor - Shape: {all_tensors.shape}, Min: {all_tensors.min():.3f}, Max: {all_tensors.max():.3f}")
 
     return all_tensors
 

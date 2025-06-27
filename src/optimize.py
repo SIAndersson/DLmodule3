@@ -368,7 +368,7 @@ def create_pareto_plot(study):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig("pareto_front.pdf", dpi=300, bbox_inches="tight", format='pdf')
+        plt.savefig("pareto_front.pdf", dpi=300, bbox_inches="tight", format="pdf")
         plt.show()
 
     except ImportError:

@@ -2,6 +2,8 @@ import logging
 import os
 from typing import Dict, Optional
 
+import yaml
+from pathlib import Path
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
@@ -29,6 +31,7 @@ from utils.visualisation import (
     plot_loss_function,
     save_2d_samples,
     save_image_samples,
+    plot_final_metrics,
 )
 
 # Configure matplotlib for better aesthetics
@@ -400,12 +403,14 @@ def main(cfg: DictConfig):
         accelerator = "cpu"
         devices = "auto"
 
-
     # Initialize PyTorch Lightning Trainer and fit the model
     log.info("Training model...")
+    extra_name = cfg.main.get("extra_name", "default")
     tracker = MetricTracker()
     model_checkpoint_callback = create_model_checkpoint_callback(
-        model_name="flow_matching", dataset_type=cfg.main.dataset.lower(), extra_name=cfg.main.get("extra_name", "default")
+        model_name="flow_matching",
+        dataset_type=cfg.main.dataset.lower(),
+        extra_name=extra_name,
     )
     early_stopping_callback = create_early_stopping_callback(patience=50)
 
@@ -473,13 +478,30 @@ def main(cfg: DictConfig):
             plot_loss_function(tracker, "flow_matching", cfg.main.dataset.lower())
         # Final evaluation
         final_metrics = model.run_final_evaluation(final_samples)
+        repo_root = Path(__file__).parent.parent
+        output_path = repo_root / "evaluation_plots"
+        output_path.mkdir(parents=True, exist_ok=True)
+        fig = plot_final_metrics(
+            final_metrics,
+            save_path=output_path / f"flow_matching_{cfg.main.dataset}_{extra_name}_final_metrics.pdf",
+        )
+        plt.close(fig)
 
+    # Save metrics history
     metrics_history = model.get_metrics_history()
+    repo_root = Path(__file__).parent.parent
+    output_path = repo_root / "eval_outputs"
+    output_path.mkdir(parents=True, exist_ok=True)
+    with open(
+        output_path / f"flow_matching_{cfg.main.dataset}_{extra_name}_metrics_history.yaml", "w"
+    ) as file:
+        yaml.dump(metrics_history, file)
+
     if cfg.main.visualization:
         fig = plot_evaluation_metrics(
             metrics_history,
             "vector_field",
-            save_path=f"flow_matching_{cfg.main.dataset}_metrics.pdf",
+            save_path=f"flow_matching_{cfg.main.dataset}_metrics_{extra_name}.pdf",
         )
         plt.close()
 
