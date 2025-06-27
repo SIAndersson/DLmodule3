@@ -453,7 +453,10 @@ def main(cfg: DictConfig):
         dataset_type=cfg.main.dataset.lower(),
         extra_name=extra_name,
     )
-    early_stopping_callback = create_early_stopping_callback(patience=50)
+    callbacks = [tracker, model_checkpoint_callback]
+    if cfg.main.get("early_stopping", False):
+        early_stopping_callback = create_early_stopping_callback(patience=50)
+        callbacks.append(early_stopping_callback)
 
     # Initialise MLFlowLogger (wanted to try this for a while so this is me indulging)
     experiment_name = f"sweep_diffusion_{cfg.main.dataset.lower()}"
@@ -477,7 +480,7 @@ def main(cfg: DictConfig):
         accelerator=accelerator,
         devices=devices,
         strategy=strategy,
-        callbacks=[tracker, model_checkpoint_callback],
+        callbacks=callbacks,
         logger=mlflow_logger,
         enable_progress_bar=True,
         log_every_n_steps=10,
