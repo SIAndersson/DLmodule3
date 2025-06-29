@@ -212,7 +212,7 @@ def plot_overview(df, save_path, figsize=(24, 18)):
     sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', center=0, 
                 square=True, cbar_kws={'shrink': 0.6})
     plt.title('Metric Correlations', fontweight='bold', pad=15)
-    plt.xticks(rotation=45, ha='right')
+    plt.xticks(rotation=90)
     plt.yticks(rotation=0)
     
     # 2. Normalized performance by category
@@ -416,8 +416,7 @@ def plot_overview(df, save_path, figsize=(24, 18)):
     # Use shorter labels for pie chart
     short_labels = ['Lower Better', 'Higher Better', 'Closer to Zero']
     plt.pie(direction_counts.values(), labels=short_labels, 
-           autopct='%1.1f%%', startangle=90, colors=['lightcoral', 'lightgreen', 'lightblue'],
-           textprops={'fontsize': 9})
+           autopct='%1.1f%%', startangle=90, colors=['lightcoral', 'lightgreen', 'lightblue'],)
     plt.title('Metric Direction Distribution', fontweight='bold', pad=15)
     
     # Save with tight layout and high DPI
@@ -514,7 +513,7 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
               ncol=len(legend_elements), fontsize=10)
     
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.18)  # Increase bottom margin for legend
+    #plt.subplots_adjust(bottom=0.18)  # Increase bottom margin for legend
     plt.savefig(save_path, bbox_inches='tight')
     plt.close()
     
