@@ -4,7 +4,6 @@ import random
 from pathlib import Path
 
 import h5py
-import numpy as np
 import math
 from tqdm import tqdm
 import pytorch_lightning as pl
@@ -39,14 +38,18 @@ def load_huggingface_data(
     filename = dataset_base
     if test:
         filename += "_test"
-    save_path = Path(__file__).parent.parent.parent / "data" / f"{filename}.{'h5' if use_h5 else 'pt'}"
+    save_path = (
+        Path(__file__).parent.parent.parent
+        / "data"
+        / f"{filename}.{'h5' if use_h5 else 'pt'}"
+    )
 
     # Check if dataset file exists
     if save_path.exists():
         logger.info(f"Loading dataset tensor from {save_path}")
         if use_h5:
-            with h5py.File(save_path, 'r') as f:
-                data = f['images'][:]
+            with h5py.File(save_path, "r") as f:
+                data = f["images"][:]
                 return torch.from_numpy(data)
         else:
             all_tensors = torch.load(save_path)
@@ -101,7 +104,7 @@ def load_huggingface_data(
 
     sample_batch = dataset[0:1]["pixel_values"]
     _, C, H, W = sample_batch.shape
-    dtype  = sample_batch.dtype
+    dtype = sample_batch.dtype
     device = sample_batch.device
 
     all_tensors = torch.empty((N, C, H, W), dtype=dtype, device=device)
@@ -111,7 +114,7 @@ def load_huggingface_data(
 
     for i in tqdm(range(num_chunks), desc="Loading in dataset..."):
         start = i * chunk_size
-        end   = min(start + chunk_size, N)
+        end = min(start + chunk_size, N)
         chunk_tensor = dataset[start:end]["pixel_values"]
         all_tensors[start:end] = chunk_tensor
 
@@ -120,13 +123,17 @@ def load_huggingface_data(
     if use_h5:
         # Convert to numpy for saving
         numpy_data = all_tensors.cpu().numpy()
-        with h5py.File(save_path, 'w') as f:
-            f.create_dataset('images', data=numpy_data, compression='gzip', compression_opts=1)
+        with h5py.File(save_path, "w") as f:
+            f.create_dataset(
+                "images", data=numpy_data, compression="gzip", compression_opts=1
+            )
     else:
         torch.save(all_tensors, save_path)
-    logger.info(f"Dataset saved successfully!")
+    logger.info("Dataset saved successfully!")
 
-    logger.info(f"Final tensor - Shape: {all_tensors.shape}, Min: {all_tensors.min():.3f}, Max: {all_tensors.max():.3f}")
+    logger.info(
+        f"Final tensor - Shape: {all_tensors.shape}, Min: {all_tensors.min():.3f}, Max: {all_tensors.max():.3f}"
+    )
 
     return all_tensors
 
@@ -166,7 +173,9 @@ def create_dataset(cfg: DictConfig, log: logging.Logger):
     elif cfg.main.dataset.lower() == "ffhq":
         dataset_name = "Dmini/FFHQ-64x64"
         log.info(f"Loading dataset: {dataset_name}")
-        return load_huggingface_data(dataset_name, log, cfg.main.test, cfg.main.get("use_h5", False))
+        return load_huggingface_data(
+            dataset_name, log, cfg.main.test, cfg.main.get("use_h5", False)
+        )
     else:
         raise ValueError(f"Unknown dataset: {cfg.main.dataset}")
 

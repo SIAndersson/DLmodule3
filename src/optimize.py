@@ -144,7 +144,7 @@ def objective(trial):
             cfg = hydra.compose(
                 config_name="config", overrides=[*overrides, *cli_overrides]
             )
-            
+
         secondary_objective = cfg.main.get("optim_objective", "precision")
 
         set_seed(cfg.main.seed)
@@ -227,7 +227,9 @@ def objective(trial):
         except optuna.TrialPruned as e:
             log.error(f"Trial pruned: {e}")
             train_loss = trainer.callback_metrics.get("train_loss", None)
-            eval_precision = trainer.callback_metrics.get(f"eval/{secondary_objective}", None)
+            eval_precision = trainer.callback_metrics.get(
+                f"eval/{secondary_objective}", None
+            )
 
             # Fallback to large values if missing or not a number
             if train_loss is None or not hasattr(train_loss, "item"):
@@ -235,7 +237,9 @@ def objective(trial):
             else:
                 train_loss_value = train_loss.item()
             if eval_precision is None or not hasattr(eval_precision, "item"):
-                eval_precision_value = 0.0 if secondary_objective == "precision" else 10e10
+                eval_precision_value = (
+                    0.0 if secondary_objective == "precision" else 10e10
+                )
             else:
                 eval_precision_value = eval_precision.item()
 
@@ -263,7 +267,7 @@ def run_optimization():
     with hydra.initialize(config_path="conf", version_base=None):
         cli_overrides = [arg for arg in sys.argv[1:] if "=" in arg]
         cfg = hydra.compose(config_name="config", overrides=[*cli_overrides])
-        
+
     secondary_objective = cfg.main.get("optim_objective", "precision")
 
     max_retries = 10
@@ -278,9 +282,7 @@ def run_optimization():
             )
         else:
             study_name = f"diffusion_{secondary_objective}_optuna_study"
-            storage_url = cfg.main.get(
-                "sqlite_url", "sqlite:///diffusion_study_db.db"
-            )
+            storage_url = cfg.main.get("sqlite_url", "sqlite:///diffusion_study_db.db")
         # For sqlite, no engine_kwargs needed
         storage = RDBStorage(url=storage_url)
     else:
@@ -297,7 +299,9 @@ def run_optimization():
 
         for attempt in range(max_retries):
             try:
-                storage = RDBStorage(url=storage_url, engine_kwargs={"pool_pre_ping": True})
+                storage = RDBStorage(
+                    url=storage_url, engine_kwargs={"pool_pre_ping": True}
+                )
                 break
             except Exception as e:
                 print(f"Connection attempt {attempt + 1} failed: {e}")
@@ -310,7 +314,10 @@ def run_optimization():
     study = optuna.create_study(
         study_name=study_name,
         storage=storage,
-        directions=["minimize", "maximize" if secondary_objective == "precision" else "minimize"],  # minimize both train_loss and eval/precision
+        directions=[
+            "minimize",
+            "maximize" if secondary_objective == "precision" else "minimize",
+        ],  # minimize both train_loss and eval/precision
         sampler=optuna.samplers.TPESampler(),  # Changed to TPESampler as it is faster in the current version of Optuna (4.4.0)
         load_if_exists=True,
     )
@@ -366,7 +373,9 @@ def create_pareto_plot(study, study_name, secondary_objective):
 
         # Plot all trials
         non_pareto_train = [tl for tl, ip in zip(train_losses, is_pareto) if not ip]
-        non_pareto_precision = [ef for ef, ip in zip(eval_precisions, is_pareto) if not ip]
+        non_pareto_precision = [
+            ef for ef, ip in zip(eval_precisions, is_pareto) if not ip
+        ]
         non_pareto_train = [x for x in non_pareto_train if x < 1e10]
         non_pareto_precision = [x for x in non_pareto_precision if x < 1e10]
         plt.scatter(
@@ -384,7 +393,12 @@ def create_pareto_plot(study, study_name, secondary_objective):
         pareto_train = [x for x in pareto_train if x < 1e10]
         pareto_precision = [x for x in pareto_precision if x < 1e10]
         plt.scatter(
-            pareto_train, pareto_precision, color="red", s=100, label="Pareto front", zorder=5
+            pareto_train,
+            pareto_precision,
+            color="red",
+            s=100,
+            label="Pareto front",
+            zorder=5,
         )
 
         plt.xlabel("Train Loss")
@@ -393,7 +407,12 @@ def create_pareto_plot(study, study_name, secondary_objective):
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(f"{study_name}_{secondary_objective}_pareto_front.pdf", dpi=300, bbox_inches="tight", format="pdf")
+        plt.savefig(
+            f"{study_name}_{secondary_objective}_pareto_front.pdf",
+            dpi=300,
+            bbox_inches="tight",
+            format="pdf",
+        )
         plt.show()
 
     except ImportError:
@@ -440,10 +459,14 @@ def select_best_solution(study, train_loss_weight=0.5, precision_weight=0.5):
 
         # Normalize eval_precision so that lower is better (for weighted sum minimization)
         if secondary_objective == "precision":
-            norm_eval_precision = (max_eval_precision - eval_precision) / (max_eval_precision - min_eval_precision + 1e-8)
+            norm_eval_precision = (max_eval_precision - eval_precision) / (
+                max_eval_precision - min_eval_precision + 1e-8
+            )
         # Normalize FID the same way as loss
         else:
-            norm_eval_precision = (eval_precision - min_eval_precision) / (max_eval_precision - min_eval_precision + 1e-8)
+            norm_eval_precision = (eval_precision - min_eval_precision) / (
+                max_eval_precision - min_eval_precision + 1e-8
+            )
 
         # Weighted combination
         combined_score = (
@@ -471,10 +494,16 @@ if __name__ == "__main__":
 
     # You can select the best solution based on your preferences
     # Option 1: Equal weighting
-    best_equal = select_best_solution(study, train_loss_weight=0.5, precision_weight=0.5)
+    best_equal = select_best_solution(
+        study, train_loss_weight=0.5, precision_weight=0.5
+    )
 
     # Option 2: Prioritize image quality (precision)
-    best_quality = select_best_solution(study, train_loss_weight=0.3, precision_weight=0.7)
+    best_quality = select_best_solution(
+        study, train_loss_weight=0.3, precision_weight=0.7
+    )
 
     # Option 3: Prioritize training stability (loss)
-    best_stability = select_best_solution(study, train_loss_weight=0.7, precision_weight=0.3)
+    best_stability = select_best_solution(
+        study, train_loss_weight=0.7, precision_weight=0.3
+    )

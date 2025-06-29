@@ -59,22 +59,22 @@ class StandaloneGenerativeModelEvaluator:
         """Initialize lightweight feature extractor"""
         if not self.feature_extractor_name or self.dataset_type == "2d":
             return
-        
+
         if self.compute_fid or self.feature_extractor_name == "inception":
             os.environ["TORCH_HOME"] = str(self.cache_dir)
-            
+
             # Load Inception-v3 pretrained on ImageNet (standard for FID)
             model = models.inception_v3(pretrained=True, transform_input=False)
             self.logger.info("Loaded Inception.")
-            
+
             # Remove the final classification layers to get features from pool3
             # This gives us the 2048-dimensional feature vector used in FID
             model.fc = nn.Identity()
             model.AuxLogits.fc = nn.Identity()
-            
+
             for param in model.parameters():
                 param.requires_grad = False
-            
+
             self.feature_extractor = model
             self.feature_dim = 2048
 
@@ -87,12 +87,12 @@ class StandaloneGenerativeModelEvaluator:
         if self.feature_extractor:
             self.feature_extractor.eval()
             self.feature_extractor.to(device)
-            
+
             if self.feature_extractor_name == "inception":
                 input_size = 299
             else:
                 input_size = 224
-                
+
             self.preprocess = transforms.Compose(
                 [
                     transforms.Resize((input_size, input_size)),
@@ -115,7 +115,9 @@ class StandaloneGenerativeModelEvaluator:
             # Handle different input formats and ensure correct preprocessing
             if batch.dim() == 4:
                 # Check if values are in [0,1] or [-1,1] range and convert to [0,1] if needed (Inception wants [-1, 1] so do not convert)
-                self.logger.info(f"BEFORE TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}.")
+                self.logger.info(
+                    f"BEFORE TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}."
+                )
                 if batch.min() < 0 and self.feature_extractor_name != "inception":
                     batch = (batch + 1) / 2  # Convert from [-1,1] to [0,1]
 
@@ -131,7 +133,9 @@ class StandaloneGenerativeModelEvaluator:
                 raise ValueError(f"Expected 4D tensor for images, got {batch.dim()}D")
 
             with torch.no_grad():
-                self.logger.info(f"AFTER TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}.")
+                self.logger.info(
+                    f"AFTER TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}."
+                )
                 feat = self.feature_extractor(batch)
                 # Global average pooling if spatial dimensions remain
                 if feat.dim() > 2:
@@ -144,22 +148,24 @@ class StandaloneGenerativeModelEvaluator:
     def cache_real_data(self, real_data, device):
         """
         Cache real data features for evaluation. Call this once before running evaluations.
-        
+
         Args:
             real_data (torch.Tensor): Real training data tensor
             device: Device to use for computation
         """
         self.logger.info("Caching real data features...")
         self.device = device
-        
+
         # Setup feature extractor if needed
         if self.feature_extractor is None and self.dataset_type == "image":
             self.setup_feature_extractor(device)
-        
+
         # Move to device and extract features
         real_data = real_data.to(device)
         self.real_features_cache = self._extract_features(real_data).cpu()
-        self.logger.info(f"Cached features for {len(self.real_features_cache)} real samples")
+        self.logger.info(
+            f"Cached features for {len(self.real_features_cache)} real samples"
+        )
 
     def _compute_wasserstein_distance(self, real_features, fake_features):
         """Compute 1-Wasserstein distance"""
@@ -376,8 +382,10 @@ class StandaloneGenerativeModelEvaluator:
         mean_pairwise_distance = distances_flat.mean().item()
         min_pairwise_distance = distances_flat.min().item()
         std_pairwise_distance = distances_flat.std().item()
-        
-        self.logger.info(f"Feature min/max:, {fake_subset.min().item()}, {fake_subset.max().item()}")
+
+        self.logger.info(
+            f"Feature min/max:, {fake_subset.min().item()}, {fake_subset.max().item()}"
+        )
         self.logger.info(f"Any NaNs?, {torch.isnan(fake_subset).any().item()}")
         self.logger.info(f"Any Infs?, {torch.isinf(fake_subset).any().item()}")
 
@@ -477,22 +485,22 @@ class StandaloneGenerativeModelEvaluator:
     def evaluate(self, generated_samples):
         """
         Evaluate generated samples against cached real data.
-        
+
         Args:
             generated_samples (torch.Tensor): Generated samples tensor
-            
+
         Returns:
             dict: Dictionary of computed metrics
-            
+
         Raises:
             ValueError: If real data hasn't been cached yet
         """
         if not self.is_cached():
             raise ValueError("Real data not cached. Call cache_real_data() first.")
-        
+
         if self.device is None:
             raise ValueError("Device not set. Call cache_real_data() first.")
-        
+
         # Extract features from generated samples
         generated_samples = generated_samples.to(self.device)
         fake_features = self._extract_features(generated_samples).cpu()
@@ -564,7 +572,9 @@ class StandaloneGenerativeModelEvaluator:
 
         # Compute Diversity Metrics
         if self.compute_diversity_metrics:
-            diversity_metrics = self._compute_diversity_metrics(fake_features, self.device)
+            diversity_metrics = self._compute_diversity_metrics(
+                fake_features, self.device
+            )
             metrics.update(diversity_metrics)
             self.logger.debug("Computed diversity metrics.")
 

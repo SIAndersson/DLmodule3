@@ -190,7 +190,9 @@ class GenerativeModelEvaluator:
                         samples = model.fast_sample(current_batch_size, device)
                     elif self.model_type == "diffusion":
                         samples = model.ddim_sample(
-                            (current_batch_size, 3, 256, 256), device, num_inference_steps=100,
+                            (current_batch_size, 3, 256, 256),
+                            device,
+                            num_inference_steps=100,
                         )
                     else:
                         raise ValueError(f"Unknown model type: {self.model_type}")
@@ -670,7 +672,7 @@ def create_evaluation_config(
             "logger": log,
             "model_type": model_type,
             "dataset_type": data_type,
-            "eval_every_n_epochs":  10 if data_type == "image" else 5,
+            "eval_every_n_epochs": 10 if data_type == "image" else 5,
             "num_samples": 500,
             "feature_extractor": "mobilenet" if data_type == "image" else None,
             "cache_dir": "./weights",

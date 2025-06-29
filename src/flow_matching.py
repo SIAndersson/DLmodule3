@@ -276,7 +276,6 @@ class FlowMatching(pl.LightningModule, EvaluationMixin):
         else:
             x = torch.randn(num_samples, *self.dim, device=device)
         return self.sample_from_noise(x, device)
-        
 
     @torch.no_grad()
     def sample_from_noise(self, noise, device):
@@ -492,7 +491,8 @@ def main(cfg: DictConfig):
             output_path.mkdir(parents=True, exist_ok=True)
             fig = plot_final_metrics(
                 final_metrics,
-                save_path=output_path / f"flow_matching_{cfg.main.dataset}_{extra_name}_final_metrics.pdf",
+                save_path=output_path
+                / f"flow_matching_{cfg.main.dataset}_{extra_name}_final_metrics.pdf",
             )
             plt.close(fig)
         except Exception as e:
@@ -504,7 +504,9 @@ def main(cfg: DictConfig):
     output_path = repo_root / "eval_outputs"
     output_path.mkdir(parents=True, exist_ok=True)
     with open(
-        output_path / f"flow_matching_{cfg.main.dataset}_{extra_name}_metrics_history.yaml", "w"
+        output_path
+        / f"flow_matching_{cfg.main.dataset}_{extra_name}_metrics_history.yaml",
+        "w",
     ) as file:
         yaml.dump(metrics_history, file)
 

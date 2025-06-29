@@ -481,7 +481,9 @@ def create_metrics_summary_table(metrics_history: Dict) -> pd.DataFrame:
     return pd.DataFrame(summary_data)
 
 
-def save_image_samples(samples: torch.Tensor, model_name: str, dataset: str, eval_dir: str = None):
+def save_image_samples(
+    samples: torch.Tensor, model_name: str, dataset: str, eval_dir: str = None
+):
     """Save generated samples as images."""
     # Denormalize from [-1, 1] to [0, 1]
     samples = (samples + 1) / 2
