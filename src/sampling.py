@@ -553,11 +553,11 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
                                        alpha=0.8, edgecolor='gold', linewidth=3, 
                                        label='Best Performer'))
     
-    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02), 
+    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02),
               ncol=len(legend_elements), fontsize=10)
     
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.2)  # Make room for legend
+    plt.subplots_adjust(bottom=0.12)  # Make room for legend
     plt.savefig(save_path)
     plt.close()
     
@@ -817,7 +817,7 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
               ncol=len(legend_elements), fontsize=9)
     
     # Add overall title
-    fig.suptitle(f'Complete Metric Analysis - All {n_metrics} Metrics Models Ranked by Performance', 
+    fig.suptitle(f'All {n_metrics} Metrics Ranked by Performance', 
                 fontsize=16, fontweight='bold', y=0.98)
 
     plt.tight_layout()
