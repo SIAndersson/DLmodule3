@@ -17,7 +17,7 @@ class StandaloneGenerativeModelEvaluator:
     def __init__(
         self,
         logger,
-        dataset_type="2d",  # 2d or image
+        dataset_type="image",  # 2d or image
         feature_extractor="inception",  # 'mobilenet', 'inception', or None
         cache_dir="./weights",
         compute_coverage_precision=True,
@@ -65,10 +65,17 @@ class StandaloneGenerativeModelEvaluator:
             
             # Load Inception-v3 pretrained on ImageNet (standard for FID)
             model = models.inception_v3(pretrained=True, transform_input=False)
+            self.logger.info("Loaded Inception.")
             
             # Remove the final classification layers to get features from pool3
             # This gives us the 2048-dimensional feature vector used in FID
-            self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
+            model.fc = nn.Identity()
+            model.AuxLogits.fc = nn.Identity()
+            
+            for param in model.parameters():
+                param.requires_grad = False
+            
+            self.feature_extractor = model
             self.feature_dim = 2048
 
         elif self.feature_extractor_name == "mobilenet":
@@ -81,11 +88,11 @@ class StandaloneGenerativeModelEvaluator:
             self.feature_extractor.eval()
             self.feature_extractor.to(device)
             
-            if self.feature_extractor_name == "inception" or self.compute_fid:
+            if self.feature_extractor_name == "inception":
                 input_size = 299
             else:
                 input_size = 224
-
+                
             self.preprocess = transforms.Compose(
                 [
                     transforms.Resize((input_size, input_size)),
@@ -94,6 +101,7 @@ class StandaloneGenerativeModelEvaluator:
                     ),
                 ]
             )
+            self.logger.info("Set up transforms.")
 
     def _extract_features(self, samples):
         """Extract features from samples"""
@@ -106,8 +114,9 @@ class StandaloneGenerativeModelEvaluator:
 
             # Handle different input formats and ensure correct preprocessing
             if batch.dim() == 4:
-                # Check if values are in [0,1] or [-1,1] range and convert to [0,1] if needed
-                if batch.min() < 0:
+                # Check if values are in [0,1] or [-1,1] range and convert to [0,1] if needed (Inception wants [-1, 1] so do not convert)
+                self.logger.info(f"BEFORE TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}.")
+                if batch.min() < 0 and self.feature_extractor_name != "inception":
                     batch = (batch + 1) / 2  # Convert from [-1,1] to [0,1]
 
                 # Ensure RGB format
@@ -122,6 +131,7 @@ class StandaloneGenerativeModelEvaluator:
                 raise ValueError(f"Expected 4D tensor for images, got {batch.dim()}D")
 
             with torch.no_grad():
+                self.logger.info(f"AFTER TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}.")
                 feat = self.feature_extractor(batch)
                 # Global average pooling if spatial dimensions remain
                 if feat.dim() > 2:
@@ -366,6 +376,10 @@ class StandaloneGenerativeModelEvaluator:
         mean_pairwise_distance = distances_flat.mean().item()
         min_pairwise_distance = distances_flat.min().item()
         std_pairwise_distance = distances_flat.std().item()
+        
+        self.logger.info(f"Feature min/max:, {fake_subset.min().item()}, {fake_subset.max().item()}")
+        self.logger.info(f"Any NaNs?, {torch.isnan(fake_subset).any().item()}")
+        self.logger.info(f"Any Infs?, {torch.isinf(fake_subset).any().item()}")
 
         # Distance entropy (convert to CPU for histogram)
         hist = torch.histc(

@@ -50,9 +50,11 @@ if torch.cuda.is_available():
 class DiffusionModel(pl.LightningModule, EvaluationMixin):
     """
     Denoising Diffusion Probabilistic Model (DDPM) implementation
+    
+    Lot of inspo from https://github.com/rosinality/denoising-diffusion-pytorch/blob/master/diffusion.py
 
     Mathematical Framework:
-
+    
     Forward Process (adding noise):
     q(x_t | x_{t-1}) = N(x_t; √(1-β_t) x_{t-1}, β_t I)
     q(x_t | x_0) = N(x_t; √(α̅_t) x_0, (1-α̅_t) I)
@@ -131,13 +133,41 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         self.register_buffer("betas", self._cosine_beta_schedule(self.num_timesteps))
         self.register_buffer("alphas", 1.0 - self.betas)
         self.register_buffer("alphas_cumprod", torch.cumprod(self.alphas, dim=0))
-        self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(self.alphas_cumprod))
+        
+        # Add small epsilon to prevent numerical issues
+        eps = 1e-8
+        self.register_buffer("sqrt_alphas_cumprod", torch.sqrt(self.alphas_cumprod + eps))
         self.register_buffer(
-            "sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - self.alphas_cumprod)
+            "sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - self.alphas_cumprod + eps)
         )
 
         # For reverse process
-        self.register_buffer("sqrt_recip_alphas", torch.sqrt(1.0 / self.alphas))
+        self.register_buffer("sqrt_recip_alphas", torch.sqrt(1.0 / (self.alphas + eps)))
+        
+        # Compute posterior variance for proper sampling
+        # β̃_t = (1 - α̅_{t-1}) / (1 - α̅_t) * β_t
+        alphas_cumprod_prev = torch.cat([torch.ones(1), self.alphas_cumprod[:-1]])
+        self.register_buffer(
+            "posterior_variance",
+            self.betas * (1.0 - alphas_cumprod_prev) / (1.0 - self.alphas_cumprod + eps)
+        )
+        # Clamp to prevent log(0)
+        self.register_buffer(
+            "posterior_log_variance_clipped",
+            torch.log(torch.clamp(self.posterior_variance, min=1e-20))
+        )
+        
+        # Key coefficients for proper posterior mean calculation
+        self.register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / self.alphas_cumprod))
+        self.register_buffer("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / self.alphas_cumprod - 1))
+        self.register_buffer(
+            "posterior_mean_coef1",
+            self.betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        )
+        self.register_buffer(
+            "posterior_mean_coef2", 
+            (1.0 - alphas_cumprod_prev) * torch.sqrt(self.alphas) / (1.0 - self.alphas_cumprod)
+        )
 
     def setup(self, stage=None):
         self.setup_evaluator(stage)
@@ -264,6 +294,29 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
 
     def get_metrics_history(self):
         return self.metrics_history
+    
+    @torch.no_grad()
+    def predict_start_from_noise(self, x_t, t, noise):
+        """Predict x_0 from noise"""
+        reshape_dims = (-1,) + (1,) * (x_t.dim() - 1)
+        return (
+            self.sqrt_recip_alphas_cumprod[t].reshape(*reshape_dims) * x_t
+            - self.sqrt_recipm1_alphas_cumprod[t].reshape(*reshape_dims) * noise
+        )
+        
+        
+    @torch.no_grad()
+    def q_posterior(self, x_0, x_t, t):
+        """Compute posterior mean and variance"""
+        reshape_dims = (-1,) + (1,) * (x_t.dim() - 1)
+        mean = (
+            self.posterior_mean_coef1[t].reshape(*reshape_dims) * x_0
+            + self.posterior_mean_coef2[t].reshape(*reshape_dims) * x_t
+        )
+        var = self.posterior_variance[t].reshape(*reshape_dims)
+        log_var_clipped = self.posterior_log_variance_clipped[t].reshape(*reshape_dims)
+        return mean, var, log_var_clipped
+    
 
     @torch.no_grad()
     def p_sample(self, x, t):
@@ -282,21 +335,29 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
             *reshape_dims
         )
         sqrt_recip_alphas_t = self.sqrt_recip_alphas[t].reshape(*reshape_dims)
+        posterior_variance_t = self.posterior_variance[t].reshape(*reshape_dims)
 
-        # Predict noise and compute mean
+        # Predict noise
         predicted_noise = self.model(x, t)
-        model_mean = sqrt_recip_alphas_t * (
-            x - betas_t * predicted_noise / sqrt_one_minus_alphas_cumprod_t
-        )
+        
+        # Predict x_0 from noise
+        pred_x0 = self.predict_start_from_noise(x, t, predicted_noise)
+        
+        # Clamp predicted x_0 to [-1, 1] (this is what was missing!)
+        pred_x0 = torch.clamp(pred_x0, -1.0, 1.0)
+        
+        # Compute posterior mean using clamped x_0
+        mean, var, log_var = self.q_posterior(pred_x0, x, t)
 
         if t.min() == 0:
             # No noise at t=0
-            return model_mean
+            return mean
         else:
             # Add noise for t > 0
             noise = torch.randn_like(x)
+            nonzero_mask = (1 - (t == 0).float()).reshape(*reshape_dims)
             # Use fixed variance σ_t² = β_t (as in original DDPM)
-            return model_mean + torch.sqrt(betas_t) * noise
+            return mean + nonzero_mask * torch.exp(0.5 * log_var) * noise
 
     @torch.no_grad()
     def sample(self, shape, device):
@@ -347,7 +408,8 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
         # Handle dimensions for broadcasting
         reshape_dims = (-1,) + (1,) * (x_t.dim() - 1)
 
-        # Get alpha values
+        # Get alpha values with epsilon for stability
+        eps = 1e-8
         alpha_t = self.alphas_cumprod[t_batch].reshape(*reshape_dims)
         alpha_prev = (
             self.alphas_cumprod[prev_t_batch].reshape(*reshape_dims)

@@ -840,6 +840,7 @@ def main():
     dataset_name = "Dmini/FFHQ-64x64"
     log.info(f"Loading dataset: {dataset_name}")
     real_data = load_huggingface_data(dataset_name, log, test=True, use_h5=True)
+    log.info(real_data.shape)
     
     # Set up evaluator
     evaluator = StandaloneGenerativeModelEvaluator(logger=log, dataset_type="image")
