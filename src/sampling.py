@@ -4,6 +4,8 @@ import fnmatch
 
 from typing import Dict, Tuple
 
+from itertools import combinations
+import pandas as pd
 import sys
 import colorlog
 from pathlib import Path
@@ -54,6 +56,48 @@ stdout.setFormatter(fmt)
 log.addHandler(stdout)
 log.setLevel(logging.INFO)
 
+# Metric categories with optimization directions
+METRIC_CATEGORIES = {
+    # Lower is better metrics
+    "distance_metrics": {
+        "metrics": [
+            "wasserstein_distance",
+            "mmd",
+            "js_divergence",
+            "energy_distance",
+            "spectral_divergence",
+            "density_ks_stat",
+            "fid",
+        ],
+        "better": "lower",
+        "title": "Distance Metrics (Lower is Better)",
+    },
+    # Higher is better metrics
+    "quality_metrics": {
+        "metrics": [
+            "coverage",
+            "precision",
+            "mode_collapse_score",
+            "mean_pairwise_distance",
+            "min_pairwise_distance",
+            "std_pairwise_distance",
+            "distance_entropy",
+        ],
+        "better": "higher",
+        "title": "Quality Metrics (Higher is Better)",
+    },
+    # Special metrics (context dependent)
+    "ratio_metrics": {
+        "metrics": [
+            "duplicate_ratio",
+            "log_density_ratio",
+            "condition_number_ratio",
+        ],
+        "better": "zero",  # Generally closer to 0 is better
+        "title": "Ratio Metrics (Closer to 0 is Better)",
+    },
+}
+
 if torch.cuda.is_available():
     # Get properties of the first available GPU
     device_props = torch.cuda.get_device_properties(0)
@@ -61,152 +105,687 @@ if torch.cuda.is_available():
         torch.set_float32_matmul_precision("high")
         log.info("Tensor cores enabled globally")
         
+
+def get_metric_direction(metric):
+    """Get the optimization direction for a metric."""
+    for category in METRIC_CATEGORIES.values():
+        if metric in category["metrics"]:
+            return category["better"]
+    return "higher"  # Default assumption
+
+
+def normalize_metric_for_ranking(df, metric):
+    """Normalize metric values for ranking (higher = better after normalization)."""
+    direction = get_metric_direction(metric)
+    values = df[metric].copy()
+    
+    if direction == "lower":
+        # Invert so higher normalized values are better
+        max_val = values.max()
+        return max_val - values
+    elif direction == "zero":
+        # Distance from zero, then invert
+        abs_values = np.abs(values)
+        max_abs = abs_values.max()
+        return max_abs - abs_values
+    else:  # "higher"
+        return values
         
-def create_comprehensive_comparison(metrics_dict: Dict[str, Dict[str, float]],
-                                   normalize_metrics: bool = True,
-                                   figsize: Tuple[int, int] = (20, 15)) -> plt.Figure:
+def get_best_model_for_metric(df, metric):
+    """Get the best performing model for a specific metric."""
+    direction = get_metric_direction(metric)
+    
+    if direction == "lower":
+        return df.loc[df[metric].idxmin(), 'model']
+    elif direction == "zero":
+        abs_diff = np.abs(df[metric])
+        return df.loc[abs_diff.idxmin(), 'model']
+    else:  # "higher"
+        return df.loc[df[metric].idxmax(), 'model']
+    
+    
+def get_performance_score(df, metric, model_idx):
+    """Get a normalized performance score (0-1, where 1 is best)."""
+    direction = get_metric_direction(metric)
+    values = df[metric]
+    
+    if direction == "lower":
+        # For lower is better: (max - value) / (max - min)
+        return (values.max() - values.iloc[model_idx]) / (values.max() - values.min())
+    elif direction == "zero":
+        # For zero is better: 1 - (abs(value) / max_abs)
+        abs_values = np.abs(values)
+        if abs_values.max() == 0:
+            return 0
+        return 1 - (abs_values.iloc[model_idx] / abs_values.max())
+    else:  # "higher"
+        # For higher is better: (value - min) / (max - min)
+        try:
+            return (values.iloc[model_idx] - values.min()) / (values.max() - values.min())
+        except Exception as e:
+            log.critical(f"Performance calculation failed. Values are {values} and metric is {metric}.")
+            raise e
+        
+def plot_overview(df, save_path, figsize=(20, 15)):
     """
-    Create a comprehensive multi-panel visualization optimized for many metrics.
+    Create a comprehensive overview of all metrics with multiple visualizations.
     
     Args:
-        metrics_dict: Dictionary with model names as keys and metric dictionaries as values
-        normalize_metrics: Whether to normalize metrics to 0-1 scale for better comparison
+        df: DataFrame with columns ['model', 'type', 'optimized', ...metrics...]
+        save_path: Where to save figure
         figsize: Figure size tuple
     """
+    # Get metric columns (exclude model, type, optimized)
+    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized']]
+    
     fig = plt.figure(figsize=figsize)
     
-    # Extract data
-    model_names = list(metrics_dict.keys())
-    all_metrics = sorted(set().union(*[m.keys() for m in metrics_dict.values()]))
+    # 1. Correlation heatmap of all metrics
+    plt.subplot(2, 4, 1)
+    corr_matrix = df[metric_cols].corr()
+    sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', center=0, 
+                square=True, cbar_kws={'shrink': 0.8})
+    plt.title('Metric Correlations', fontsize=14, fontweight='bold')
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
     
-    # Prepare data matrix
-    data_matrix = []
-    for model in model_names:
-        row = [metrics_dict[model].get(metric, np.nan) for metric in all_metrics]
-        data_matrix.append(row)
-    data_matrix = np.array(data_matrix)
+    # 2. Normalized performance by category
+    plt.subplot(2, 4, 2)
+    category_scores = []
+    model_names = []
+    categories = []
     
-    # Normalize if requested
-    if normalize_metrics:
-        # Handle NaN values and normalize each metric to 0-1 scale
-        normalized_data = []
-        for j in range(len(all_metrics)):
-            col = data_matrix[:, j]
-            col_clean = col[~np.isnan(col)]
-            if len(col_clean) > 0:
-                col_min, col_max = col_clean.min(), col_clean.max()
-                if col_max > col_min:
-                    col_norm = (col - col_min) / (col_max - col_min)
-                else:
-                    col_norm = np.zeros_like(col)
+    df['model_category'] = df['type'] + ' (' + df['optimized'].map({True: 'Opt', False: 'Base'}) + ')'
+    
+    for model_idx in range(len(df)):
+        model_name = df.iloc[model_idx]['model_category']
+        
+        for cat_name, cat_info in METRIC_CATEGORIES.items():
+            available_metrics = [m for m in cat_info['metrics'] if m in df.columns]
+            if available_metrics:
+                scores = [get_performance_score(df, metric, model_idx) for metric in available_metrics]
+                avg_score = np.mean(scores)
+                category_scores.append(avg_score)
+                model_names.append(model_name)
+                categories.append(cat_info['title'])
+    
+    cat_df = pd.DataFrame({
+        'model': model_names,
+        'category': categories,
+        'score': category_scores
+    })
+    
+    try:
+        sns.boxplot(data=cat_df, x='category', y='score', palette='Set3')
+    except:
+        # Fallback for seaborn compatibility issues
+        for i, cat in enumerate(cat_df['category'].unique()):
+            cat_data = cat_df[cat_df['category'] == cat]['score']
+            plt.boxplot(cat_data, positions=[i], widths=0.6, patch_artist=True)
+        plt.xticks(range(len(cat_df['category'].unique())), cat_df['category'].unique())
+    plt.title('Performance by Metric Category', fontsize=14, fontweight='bold')
+    plt.xticks(rotation=45, ha='right')
+    plt.ylabel('Normalized Performance (0-1)')
+    
+    # 3. Type and optimization impact
+    plt.subplot(2, 4, 3)
+    df_analysis = df.copy()
+    
+    # Calculate overall performance score for each model
+    overall_scores = []
+    for model_idx in range(len(df)):
+        scores = []
+        for metric in metric_cols:
+            score = get_performance_score(df, metric, model_idx)
+            scores.append(score)
+        overall_scores.append(np.mean(scores))
+    
+    df_analysis['overall_score'] = overall_scores
+    
+    try:
+        sns.boxplot(data=df_analysis, x='type', y='overall_score', hue='optimized', 
+                    palette='Set2')
+    except:
+        # Fallback: create manual grouped boxplot
+        types = df_analysis['type'].unique()
+        opt_values = df_analysis['optimized'].unique()
+        positions = []
+        all_data = []
+        labels = []
+        
+        pos = 0
+        for i, t in enumerate(types):
+            for j, opt in enumerate(opt_values):
+                subset = df_analysis[(df_analysis['type'] == t) & (df_analysis['optimized'] == opt)]
+                if len(subset) > 0:
+                    all_data.append(subset['overall_score'].values)
+                    positions.append(pos)
+                    labels.append(f"{t}\n{'Opt' if opt else 'Base'}")
+                    pos += 1
+        
+        if all_data:
+            bp = plt.boxplot(all_data, positions=positions, widths=0.6, patch_artist=True)
+            colors = ['lightcoral', 'lightgreen'] * len(types)
+            for patch, color in zip(bp['boxes'], colors[:len(bp['boxes'])]):
+                patch.set_facecolor(color)
+            plt.xticks(positions, labels)
+    plt.title('Overall Performance by Type & Optimization', fontsize=14, fontweight='bold')
+    plt.ylabel('Average Normalized Score')
+    
+    # 4. Model ranking by overall performance
+    plt.subplot(2, 4, 4)
+    df_ranked = df_analysis.sort_values('overall_score', ascending=True)
+    
+    colors = ['lightcoral' if not opt else 'lightgreen' for opt in df_ranked['optimized']]
+    markers = ['D' if t == 'diffusion' else 'o' for t in df_ranked['type']]
+    
+    bars = plt.barh(range(len(df_ranked)), df_ranked['overall_score'], color=colors, alpha=0.8)
+    plt.yticks(range(len(df_ranked)), df_ranked['model'], fontsize=10)
+    plt.xlabel('Overall Performance Score')
+    plt.title('Model Ranking (Normalized Performance)', fontsize=14, fontweight='bold')
+    plt.grid(axis='x', alpha=0.3)
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor='lightcoral', alpha=0.8, label='Not Optimized'),
+                      Patch(facecolor='lightgreen', alpha=0.8, label='Optimized')]
+    plt.legend(handles=legend_elements, loc='lower right')
+    
+    # 5. Metric leaders by category
+    plt.subplot(2, 4, 5)
+    leader_counts = {}
+    
+    for cat_name, cat_info in METRIC_CATEGORIES.items():
+        available_metrics = [m for m in cat_info['metrics'] if m in df.columns]
+        for metric in available_metrics:
+            best_model = get_best_model_for_metric(df, metric)
+            leader_counts[best_model] = leader_counts.get(best_model, 0) + 1
+    
+    if leader_counts:
+        leaders_df = pd.DataFrame(list(leader_counts.items()), columns=['model', 'count'])
+        leaders_df = leaders_df.sort_values('count', ascending=True)
+        
+        plt.barh(range(len(leaders_df)), leaders_df['count'], 
+                color=plt.cm.tab10(np.arange(len(leaders_df))))
+        plt.yticks(range(len(leaders_df)), leaders_df['model'])
+        plt.xlabel('Number of Metrics Led')
+        plt.title('Models Leading Most Metrics', fontsize=14, fontweight='bold')
+        plt.grid(axis='x', alpha=0.3)
+    
+    # 6. Category-wise performance heatmap
+    plt.subplot(2, 4, 6)
+    heatmap_data = []
+    heatmap_models = []
+    
+    for model_idx in range(len(df)):
+        model_name = df.iloc[model_idx]['model_category']
+        row_data = []
+        for cat_name, cat_info in METRIC_CATEGORIES.items():
+            available_metrics = [m for m in cat_info['metrics'] if m in df.columns]
+            if available_metrics:
+                scores = [get_performance_score(df, metric, model_idx) for metric in available_metrics]
+                avg_score = np.mean(scores)
             else:
-                col_norm = col
-            normalized_data.append(col_norm)
-        data_matrix = np.array(normalized_data).T
+                avg_score = 0
+            row_data.append(avg_score)
+        heatmap_data.append(row_data)
+        heatmap_models.append(model_name)
     
-    # Create subplots
-    gs = fig.add_gridspec(3, 4, height_ratios=[2, 1, 1], width_ratios=[3, 1, 1, 1], 
-                         hspace=0.3, wspace=0.3)
+    heatmap_df = pd.DataFrame(heatmap_data, 
+                             index=heatmap_models,
+                             columns=[cat_info['title'].split('(')[0].strip() 
+                                    for cat_info in METRIC_CATEGORIES.values()])
     
-    # 1. Main heatmap (top-left, large)
-    ax1 = fig.add_subplot(gs[0, :3])
-    im = ax1.imshow(data_matrix, cmap='RdYlBu_r', aspect='auto')
-    ax1.set_xticks(range(len(all_metrics)))
-    ax1.set_xticklabels(all_metrics, rotation=45, ha='right')
-    ax1.set_yticks(range(len(model_names)))
-    ax1.set_yticklabels(model_names)
-    ax1.set_title('Complete Metrics Heatmap', fontsize=14, fontweight='bold')
+    sns.heatmap(heatmap_df, annot=True, cmap='RdYlGn', fmt='.2f', 
+                cbar_kws={'shrink': 0.8})
+    plt.title('Performance by Category & Model', fontsize=14, fontweight='bold')
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
     
-    # Add values to heatmap
-    for i in range(len(model_names)):
-        for j in range(len(all_metrics)):
-            if not np.isnan(data_matrix[i, j]):
-                color = 'white' if data_matrix[i, j] > 0.5 else 'black'
-                ax1.text(j, i, f'{data_matrix[i, j]:.2f}', 
-                        ha='center', va='center', color=color, fontsize=8)
+    # 7. Optimization impact by category
+    plt.subplot(2, 4, 7)
+    opt_impact_data = []
     
-    # 2. Overall performance ranking (top-right)
-    ax2 = fig.add_subplot(gs[0, 3])
-    # Calculate average performance (handling NaN)
-    avg_scores = np.nanmean(data_matrix, axis=1)
-    colors = plt.cm.viridis(np.linspace(0, 1, len(model_names)))
-    bars = ax2.barh(range(len(model_names)), avg_scores, color=colors)
-    ax2.set_yticks(range(len(model_names)))
-    ax2.set_yticklabels(model_names)
-    ax2.set_xlabel('Avg Score')
-    ax2.set_title('Overall Ranking', fontweight='bold')
-    for i, (bar, score) in enumerate(zip(bars, avg_scores)):
-        ax2.text(bar.get_width() + 0.01, bar.get_y() + bar.get_height()/2,
-                f'{score:.3f}', va='center', fontsize=9)
+    for cat_name, cat_info in METRIC_CATEGORIES.items():
+        available_metrics = [m for m in cat_info['metrics'] if m in df.columns]
+        if available_metrics:
+            for optimized in [False, True]:
+                subset = df[df['optimized'] == optimized]
+                if len(subset) > 0:
+                    scores = []
+                    for model_idx in subset.index:
+                        model_scores = [get_performance_score(df, metric, 
+                                      df.index.get_loc(model_idx)) for metric in available_metrics]
+                        scores.extend(model_scores)
+                    
+                    opt_impact_data.append({
+                        'category': cat_info['title'].split('(')[0].strip(),
+                        'optimized': 'Optimized' if optimized else 'Base',
+                        'score': np.mean(scores)
+                    })
     
-    # 3. Metric variance analysis (bottom-left)
-    ax3 = fig.add_subplot(gs[1, :2])
-    metric_vars = np.nanvar(data_matrix, axis=0)
-    ax3.bar(range(len(all_metrics)), metric_vars, color='skyblue', alpha=0.7)
-    ax3.set_xticks(range(len(all_metrics)))
-    ax3.set_xticklabels(all_metrics, rotation=45, ha='right')
-    ax3.set_ylabel('Variance')
-    ax3.set_title('Metric Discriminative Power', fontweight='bold')
+    if opt_impact_data:
+        opt_df = pd.DataFrame(opt_impact_data)
+        try:
+            sns.barplot(data=opt_df, x='category', y='score', hue='optimized', 
+                       palette='Set1')
+        except:
+            # Fallback: manual grouped bar plot
+            categories = opt_df['category'].unique()
+            opt_types = opt_df['optimized'].unique()
+            
+            x = np.arange(len(categories))
+            width = 0.35
+            
+            for i, opt_type in enumerate(opt_types):
+                subset = opt_df[opt_df['optimized'] == opt_type]
+                values = [subset[subset['category'] == cat]['score'].iloc[0] 
+                         if len(subset[subset['category'] == cat]) > 0 else 0 
+                         for cat in categories]
+                plt.bar(x + i*width, values, width, label=opt_type, 
+                       color='lightcoral' if opt_type == 'Base' else 'lightgreen')
+            plt.xticks(x + width/2, categories)
+            plt.legend()
+        plt.title('Optimization Impact by Category', fontsize=14, fontweight='bold')
+        plt.xticks(rotation=45, ha='right')
+        plt.ylabel('Average Performance Score')
     
-    # 4. Model similarity matrix (bottom-middle)
-    ax4 = fig.add_subplot(gs[1, 2])
-    # Calculate pairwise correlation between models
-    model_corr = np.corrcoef(data_matrix)
-    im4 = ax4.imshow(model_corr, cmap='coolwarm', vmin=-1, vmax=1)
-    ax4.set_xticks(range(len(model_names)))
-    ax4.set_xticklabels([name[:8] + '...' if len(name) > 8 else name for name in model_names], 
-                       rotation=45, ha='right', fontsize=8)
-    ax4.set_yticks(range(len(model_names)))
-    ax4.set_yticklabels([name[:8] + '...' if len(name) > 8 else name for name in model_names], 
-                       fontsize=8)
-    ax4.set_title('Model Similarity', fontweight='bold', fontsize=10)
+    # 8. Distribution of metric directions
+    plt.subplot(2, 4, 8)
+    direction_counts = {'Lower is Better': 0, 'Higher is Better': 0, 'Closer to Zero': 0}
     
-    # 5. Top/Bottom performers per metric (bottom-right)
-    ax5 = fig.add_subplot(gs[1, 3])
-    ax5.axis('off')
-    ax5.text(0.5, 0.9, 'Best Performers', ha='center', fontweight='bold', 
-             transform=ax5.transAxes, fontsize=12)
+    for metric in metric_cols:
+        direction = get_metric_direction(metric)
+        if direction == 'lower':
+            direction_counts['Lower is Better'] += 1
+        elif direction == 'higher':
+            direction_counts['Higher is Better'] += 1
+        else:
+            direction_counts['Closer to Zero'] += 1
     
-    # Find best performer for each metric
-    y_pos = 0.8
-    for i, metric in enumerate(all_metrics[:8]):  # Show top 8 metrics
-        if not np.isnan(data_matrix[:, i]).all():
-            best_idx = np.nanargmax(data_matrix[:, i])
-            best_model = model_names[best_idx]
-            best_score = data_matrix[best_idx, i]
-            ax5.text(0.05, y_pos, f'{metric[:12]}:', fontsize=8, 
-                    transform=ax5.transAxes, fontweight='bold')
-            ax5.text(0.95, y_pos, f'{best_model[:8]} ({best_score:.2f})', 
-                    fontsize=8, transform=ax5.transAxes, ha='right')
-            y_pos -= 0.09
+    plt.pie(direction_counts.values(), labels=direction_counts.keys(), 
+           autopct='%1.1f%%', startangle=90, colors=['lightcoral', 'lightgreen', 'lightblue'])
+    plt.title('Metric Direction Distribution', fontsize=14, fontweight='bold')
+    plt.savefig(save_path)
+    plt.close()
     
-    # 6. Worst performers (bottom part of same subplot)
-    ax5.text(0.5, 0.35, 'Worst Performers', ha='center', fontweight='bold', 
-             transform=ax5.transAxes, fontsize=12, color='red')
+
+def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
+    """
+    Create a 2x2 grid comparing 4 selected metrics with bar plots.
+    Properly handles different optimization directions.
     
-    y_pos = 0.25
-    for i, metric in enumerate(all_metrics[:8]):
-        if not np.isnan(data_matrix[:, i]).all():
-            worst_idx = np.nanargmin(data_matrix[:, i])
-            worst_model = model_names[worst_idx]
-            worst_score = data_matrix[worst_idx, i]
-            ax5.text(0.05, y_pos, f'{metric[:12]}:', fontsize=8, 
-                    transform=ax5.transAxes, fontweight='bold')
-            ax5.text(0.95, y_pos, f'{worst_model[:8]} ({worst_score:.2f})', 
-                    fontsize=8, transform=ax5.transAxes, ha='right', color='red')
-            y_pos -= 0.09
+    Args:
+        df: DataFrame with model metrics
+        metrics: List of 4 metric names to compare
+        save_path: Where to save figure
+        figsize: Figure size tuple
+    """
+    if len(metrics) != 4:
+        raise ValueError("Please provide exactly 4 metrics")
     
-    # Add colorbars
-    cbar1 = plt.colorbar(im, ax=ax1, shrink=0.6)
-    cbar1.set_label('Normalized Score' if normalize_metrics else 'Raw Score')
+    # Verify metrics exist in dataframe
+    missing_metrics = [m for m in metrics if m not in df.columns]
+    if missing_metrics:
+        raise ValueError(f"Metrics not found in dataframe: {missing_metrics}")
     
-    cbar4 = plt.colorbar(im4, ax=ax4, shrink=0.6)
-    cbar4.set_label('Correlation')
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    axes = axes.flatten()
     
-    plt.suptitle('Generative Model Evaluation: Comprehensive Analysis', 
-                fontsize=16, fontweight='bold')
+    # Create a combined category for better visualization
+    df['category'] = df['type'] + ' (' + df['optimized'].map({True: 'Opt', False: 'Base'}) + ')'
     
-    return fig
+    # Color palette for categories
+    categories = df['category'].unique()
+    colors = sns.color_palette('Set2', len(categories))
+    color_map = dict(zip(categories, colors))
+    
+    for i, metric in enumerate(metrics):
+        ax = axes[i]
+        direction = get_metric_direction(metric)
+        
+        # Sort by performance (not raw values)
+        performance_scores = [get_performance_score(df, metric, idx) for idx in range(len(df))]
+        df_with_perf = df.copy()
+        df_with_perf['performance'] = performance_scores
+        df_sorted = df_with_perf.sort_values('performance', ascending=False)
+        
+        # Create bar plot with original metric values
+        bars = ax.bar(range(len(df_sorted)), df_sorted[metric], 
+                     color=[color_map[cat] for cat in df_sorted['category']], 
+                     alpha=0.8, edgecolor='black', linewidth=0.5)
+        
+        # Customize plot based on metric direction
+        direction_indicator = {
+            'lower': '↓ Lower is Better',
+            'higher': '↑ Higher is Better', 
+            'zero': '→ Closer to Zero is Better'
+        }
+        
+        ax.set_title(f'{metric}\n{direction_indicator[direction]}', 
+                    fontsize=12, fontweight='bold', pad=20)
+        ax.set_xlabel('Models (Ranked by Performance)', fontsize=11)
+        ax.set_ylabel(f'{metric} Value', fontsize=11)
+        
+        # Set x-axis labels
+        ax.set_xticks(range(len(df_sorted)))
+        ax.set_xticklabels(df_sorted['category'], rotation=45, ha='right', fontsize=9)
+        
+        # Add value labels on bars
+        for j, (bar, val) in enumerate(zip(bars, df_sorted[metric])):
+            height = bar.get_height()
+            label_y = height + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.01
+            ax.text(bar.get_x() + bar.get_width()/2, label_y, 
+                   f'{val:.3f}', ha='center', va='bottom', fontsize=8, fontweight='bold')
+        
+        # Add grid
+        ax.grid(axis='y', alpha=0.3, linestyle='--')
+        ax.set_axisbelow(True)
+        
+        # Highlight best performer (leftmost bar, highest performance score)
+        bars[0].set_edgecolor('gold')
+        bars[0].set_linewidth(3)
+    
+    # Create shared legend
+    legend_elements = [plt.Rectangle((0,0),1,1, facecolor=color_map[cat], 
+                                   alpha=0.8, edgecolor='black', linewidth=0.5, label=cat) 
+                      for cat in categories]
+    legend_elements.append(plt.Rectangle((0,0),1,1, facecolor='gold', 
+                                       alpha=0.8, edgecolor='gold', linewidth=3, 
+                                       label='Best Performer'))
+    
+    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, 0.02), 
+              ncol=len(legend_elements), fontsize=10)
+    
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.15)  # Make room for legend
+    plt.savefig(save_path)
+    plt.close()
+    
+    
+def get_metric_suggestions(df, n=4):
+    """
+    Suggest interesting metric combinations based on correlation and variance,
+    considering optimization directions.
+    
+    Args:
+        df: DataFrame with model metrics
+        n: Number of metrics to suggest
+    """
+    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized']]
+    
+    # Calculate normalized performance variance to find most discriminative metrics
+    normalized_data = {}
+    for metric in metric_cols:
+        normalized_values = []
+        for idx in range(len(df)):
+            score = get_performance_score(df, metric, idx)
+            normalized_values.append(score)
+        normalized_data[metric] = normalized_values
+    
+    norm_df = pd.DataFrame(normalized_data)
+    variances = norm_df.var().sort_values(ascending=False)
+    
+    # Calculate correlation matrix on normalized data
+    corr_matrix = norm_df.corr().abs()
+    
+    log.info("🔍 Metric Analysis (Direction-Aware):")
+    log.info(f"Total metrics available: {len(metric_cols)}")
+    
+    # Show metrics by category
+    for cat_name, cat_info in METRIC_CATEGORIES.items():
+        available_metrics = [m for m in cat_info['metrics'] if m in df.columns]
+        if available_metrics:
+            log.info(f"\n{cat_info['title']}:")
+            for metric in available_metrics:
+                direction_symbol = {'lower': '↓', 'higher': '↑', 'zero': '→'}[cat_info['better']]
+                var_score = variances.get(metric, 0)
+                log.info(f"  {direction_symbol} {metric}: variance={var_score:.3f}")
+    
+    log.info(f"\nTop {n} most discriminative metrics (normalized):")
+    for i, (metric, var) in enumerate(variances.head(n).items(), 1):
+        direction = get_metric_direction(metric)
+        direction_symbol = {'lower': '↓', 'higher': '↑', 'zero': '→'}[direction]
+        log.info(f"  {i}. {direction_symbol} {metric}: {var:.3f}")
+    
+    # Suggest diverse metric combinations (low correlation)
+    log.info(f"\n💡 Suggested combinations for visualization:")
+    high_var_metrics = variances.head(8).index.tolist()  # Top 8 most variable
+    
+    # Find combination with lowest average correlation
+    best_combo = None
+    best_score = float('inf')
+    
+    for combo in combinations(high_var_metrics, n):
+        combo_corr = corr_matrix.loc[list(combo), list(combo)]
+        # Average correlation excluding diagonal
+        avg_corr = (combo_corr.sum().sum() - n) / (n * (n - 1))
+        if avg_corr < best_score:
+            best_score = avg_corr
+            best_combo = combo
+    
+    # Add direction indicators to suggestions
+    diverse_with_directions = []
+    for metric in best_combo:
+        direction = get_metric_direction(metric)
+        direction_symbol = {'lower': '↓', 'higher': '↑', 'zero': '→'}[direction]
+        diverse_with_directions.append(f"{direction_symbol} {metric}")
+    
+    log.info(f"  1. Diverse metrics (low correlation): {diverse_with_directions}")
+    log.info(f"     Average correlation: {best_score:.3f}")
+    
+    # Suggest category-balanced combo
+    category_balanced = []
+    for cat_name, cat_info in METRIC_CATEGORIES.items():
+        available_metrics = [m for m in cat_info['metrics'] if m in high_var_metrics]
+        if available_metrics and len(category_balanced) < n:
+            # Pick the most variable metric from this category
+            best_from_category = max(available_metrics, key=lambda x: variances[x])
+            category_balanced.append(best_from_category)
+    
+    # Fill remaining slots with most variable metrics
+    remaining_slots = n - len(category_balanced)
+    for metric in high_var_metrics:
+        if metric not in category_balanced and remaining_slots > 0:
+            category_balanced.append(metric)
+            remaining_slots -= 1
+    
+    balanced_with_directions = []
+    for metric in category_balanced:
+        direction = get_metric_direction(metric)
+        direction_symbol = {'lower': '↓', 'higher': '↑', 'zero': '→'}[direction]
+        balanced_with_directions.append(f"{direction_symbol} {metric}")
+    
+    log.info(f"  2. Category-balanced metrics: {balanced_with_directions}")
+    
+    return list(best_combo), category_balanced
+
+
+def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
+    """
+    Create a comprehensive grid showing ALL metrics with detailed bar plots.
+    Similar to plot_4_metrics but for every metric in the dataset.
+    
+    Args:
+        df: DataFrame with model metrics
+        cols: Number of columns in the grid
+        figsize_per_plot: Size of each individual plot (width, height)
+        save_path: Optional path to save the figure
+    """
+    # Get metric columns (exclude model, type, optimized, category)
+    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized', 'category']]
+    
+    if not metric_cols:
+        log.warning("No metrics found in dataframe!")
+        return
+    
+    n_metrics = len(metric_cols)
+    rows = (n_metrics + cols - 1) // cols  # Ceiling division
+    
+    # Calculate figure size
+    fig_width = cols * figsize_per_plot[0]
+    fig_height = rows * figsize_per_plot[1]
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(fig_width, fig_height))
+    
+    # Handle case where we have only one row or column
+    if rows == 1 and cols == 1:
+        axes = [axes]
+    elif rows == 1:
+        axes = [axes]
+    elif cols == 1:
+        axes = [[ax] for ax in axes]
+    else:
+        axes = axes
+    
+    # Flatten axes for easier indexing
+    if rows > 1:
+        axes_flat = [ax for row in axes for ax in row]
+    else:
+        axes_flat = axes if isinstance(axes, list) else [axes]
+    
+    # Create a combined category for better visualization
+    df_work = df.copy()
+    df_work['category'] = df_work['type'] + ' (' + df_work['optimized'].map({True: 'Opt', False: 'Base'}) + ')'
+    
+    # Color palette for categories
+    categories = df_work['category'].unique()
+    colors = sns.color_palette('Set2', len(categories))
+    color_map = dict(zip(categories, colors))
+    
+    log.info(f"📊 Creating comprehensive metric visualization...")
+    log.info(f"   • Total metrics: {n_metrics}")
+    log.info(f"   • Grid size: {rows}x{cols}")
+    log.info(f"   • Figure size: {fig_width:.1f}x{fig_height:.1f}")
+    
+    # Group metrics by category for organized display
+    metric_order = []
+    for cat_name, cat_info in METRIC_CATEGORIES.items():
+        available_metrics = [m for m in cat_info['metrics'] if m in metric_cols]
+        metric_order.extend(available_metrics)
+    
+    # Add any remaining metrics not in categories
+    remaining_metrics = [m for m in metric_cols if m not in metric_order]
+    metric_order.extend(remaining_metrics)
+    
+    metric_order = [m for m in metric_order if m != 'category']
+    
+    for i, metric in enumerate(metric_order):
+        if i >= len(axes_flat):
+            break
+            
+        ax = axes_flat[i]
+        direction = get_metric_direction(metric)
+        
+        # Sort by performance (not raw values)
+        performance_scores = [get_performance_score(df_work, metric, idx) for idx in range(len(df_work))]
+        df_with_perf = df_work.copy()
+        df_with_perf['performance'] = performance_scores
+        df_sorted = df_with_perf.sort_values('performance', ascending=False)
+        
+        # Create bar plot with original metric values
+        bars = ax.bar(range(len(df_sorted)), df_sorted[metric], 
+                     color=[color_map[cat] for cat in df_sorted['category']], 
+                     alpha=0.8, edgecolor='black', linewidth=0.3)
+        
+        # Customize plot based on metric direction
+        direction_indicator = {
+            'lower': '↓',
+            'higher': '↑', 
+            'zero': '→'
+        }
+        
+        # Shorter title for grid layout
+        ax.set_title(f'{direction_indicator[direction]} {metric}', 
+                    fontsize=10, fontweight='bold', pad=10)
+        
+        # Smaller labels for grid layout
+        ax.set_xlabel('Models', fontsize=8)
+        ax.set_ylabel('Value', fontsize=8)
+        
+        # Set x-axis labels with smaller font
+        ax.set_xticks(range(len(df_sorted)))
+        ax.set_xticklabels(df_sorted['model'], rotation=45, ha='right', fontsize=7)
+        
+        # Add value labels on bars (smaller font)
+        for j, (bar, val) in enumerate(zip(bars, df_sorted[metric])):
+            height = bar.get_height()
+            # Only show labels for top 3 performers to avoid clutter
+            if j < 3:
+                label_y = height + (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.02
+                ax.text(bar.get_x() + bar.get_width()/2, label_y, 
+                       f'{val:.2f}', ha='center', va='bottom', fontsize=6, fontweight='bold')
+        
+        # Highlight best performer
+        bars[0].set_edgecolor('gold')
+        bars[0].set_linewidth(2)
+        
+        # Adjust tick label sizes
+        ax.tick_params(axis='both', which='major', labelsize=7)
+        
+        # Show which category this metric belongs to
+        metric_category = None
+        for cat_name, cat_info in METRIC_CATEGORIES.items():
+            if metric in cat_info['metrics']:
+                metric_category = cat_name
+                break
+
+    # Hide empty subplots
+    for i in range(n_metrics, len(axes_flat)):
+        axes_flat[i].set_visible(False)
+    
+    # Create comprehensive legend
+    legend_elements = []
+    
+    # Add category colors
+    for cat in categories:
+        legend_elements.append(plt.Rectangle((0,0),1,1, facecolor=color_map[cat], 
+                                           alpha=0.8, edgecolor='black', linewidth=0.5, 
+                                           label=cat))
+    
+    # Add special indicators
+    legend_elements.extend([
+        plt.Rectangle((0,0),1,1, facecolor='gold', alpha=0.8, edgecolor='gold', 
+                     linewidth=2, label='Best Performer'),
+    ])
+    
+    # Place legend outside the plot area
+    fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.5, 0.02), 
+              ncol=min(len(legend_elements), 4), fontsize=9)
+    
+    # Add overall title
+    fig.suptitle(f'Complete Metric Analysis - All {n_metrics} Metrics\nModels Ranked by Performance', 
+                fontsize=16, fontweight='bold', y=0.98)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.12, top=0.92)  # Make room for legend and title
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        log.info(f"💾 Saved comprehensive metric plot to: {save_path}")
+    
+    plt.show()
+    
+    # Print summary statistics
+    log.info(f"\n📈 Metric Summary:")
+    log.info(f"   • Distance metrics (↓): {len([m for m in metric_cols if get_metric_direction(m) == 'lower'])}")
+    log.info(f"   • Quality metrics (↑): {len([m for m in metric_cols if get_metric_direction(m) == 'higher'])}")
+    log.info(f"   • Ratio metrics (→): {len([m for m in metric_cols if get_metric_direction(m) == 'zero'])}")
+    
+    # Show top performer for each category
+    log.info(f"\n🏆 Top Performers by Category:")
+    for cat_name, cat_info in METRIC_CATEGORIES.items():
+        available_metrics = [m for m in cat_info['metrics'] if m in df.columns]
+        if available_metrics:
+            category_leaders = {}
+            for metric in available_metrics:
+                best_model = get_best_model_for_metric(df, metric)
+                category_leaders[best_model] = category_leaders.get(best_model, 0) + 1
+            
+            if category_leaders:
+                top_model = max(category_leaders.items(), key=lambda x: x[1])
+                log.info(f"   • {cat_info['title']}: {top_model[0]} (leads {top_model[1]}/{len(available_metrics)} metrics)")
+
 
 def find_checkpoints():
     checkpoint_dir = Path(__file__).resolve().parent.parent / 'model_checkpoints'
@@ -245,6 +824,10 @@ def main():
 
     persistent_noise = torch.randn((16, 3, 64, 64), device=device)
     
+    root_dir = Path(__file__).resolve().parent.parent
+    eval_dir = root_dir / "final_evaluation_plots"
+    eval_dir.mkdir(exist_ok=True)
+    
     metrics_dict = {}
 
     checkpoints = find_checkpoints()
@@ -256,19 +839,39 @@ def main():
             model = FlowMatching.load_from_checkpoint(checkpoint).to(device)
         log.info(f'Creating samples for checkpoint {model_parts}')
         final_samples = model.sample_from_noise(persistent_noise, device)
-        save_image_samples(final_samples, model_parts[0], '_'.join(model_parts[1:]))
+        save_image_samples(final_samples, model_parts[0], '_'.join(model_parts[1:]), eval_dir=eval_dir)
         log.info(f"Images saved for model {model_parts}. Now evaluating...")
         eval_metrics = evaluator.evaluate(final_samples)
-        metrics_dict['_'.join(model_parts[:-1])] = eval_metrics
         
-    fig_comprehensive = create_comprehensive_comparison(metrics_dict, 
-                                                      normalize_metrics=True)
-    # Save image
-    root_dir = Path(__file__).resolve().parent.parent
-    eval_dir = root_dir / "evaluation_plots"
-    eval_dir.mkdir(exist_ok=True)
-    plt.savefig(eval_dir / "final_sample_metrics_comparison.pdf")
-    plt.close()
+        if "solution1" in model_parts[-2]:
+            model_parts[-2] = f"{model_parts[-2]}_test"
+        elif "solution4" in model_parts[-2]:
+            model_parts[-2] = model_parts[-2].replace("_solution4", "")
+        model_name = f"{model_parts[0]}_{model_parts[-2]}"
+        metrics_dict[model_name] = eval_metrics
+    
+    df_full = pd.DataFrame.from_dict(metrics_dict, orient='index')
+    df_full = df_full.reset_index().rename(columns={'index': 'model'})
+    df_full["type"] = df_full["model"].apply(lambda x: "fm" if "flow" in x else "diff")
+    df_full["optimized"] = df_full["model"].apply(lambda x: True if "optim" in x else False)
+    df_full["test"] = df_full["model"].apply(lambda x: True if any(sub in x for sub in ["test", "short"]) else False)
+    print(df_full.head())
+    df = df_full[df_full["test"] == False]
+    df = df.drop(columns=["test"])
+    print(df.head())
+    
+    plot_overview(df, eval_dir / "sample_metrics_overview.pdf")
+    
+    diverse_metrics, balanced_metrics = get_metric_suggestions(df)
+    log.info(f"Diverse metrics: {diverse_metrics}")
+    log.info(f"Balanced metrics: {balanced_metrics}")
+    
+    selected_metrics = ['fid', 'coverage', 'precision', 'distance_entropy']
+    plot_4_metrics(df, selected_metrics, eval_dir / "selected_metrics_comparison.pdf")
+    
+    plot_all_metrics(df, cols=5, save_path=eval_dir / "complete_metrics_comparison.pdf")
+    
+    df.to_csv(eval_dir / "final_results.csv")
 
 if __name__ == "__main__":
     main()

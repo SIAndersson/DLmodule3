@@ -481,7 +481,7 @@ def create_metrics_summary_table(metrics_history: Dict) -> pd.DataFrame:
     return pd.DataFrame(summary_data)
 
 
-def save_image_samples(samples: torch.Tensor, model_name: str, dataset: str):
+def save_image_samples(samples: torch.Tensor, model_name: str, dataset: str, eval_dir: str = None):
     """Save generated samples as images."""
     # Denormalize from [-1, 1] to [0, 1]
     samples = (samples + 1) / 2
@@ -491,9 +491,10 @@ def save_image_samples(samples: torch.Tensor, model_name: str, dataset: str):
     grid = torchvision.utils.make_grid(samples, nrow=4, padding=2)
 
     # Save image
-    root_dir = Path(__file__).resolve().parent.parent.parent
-    eval_dir = root_dir / "evaluation_plots"
-    eval_dir.mkdir(exist_ok=True)
+    if eval_dir is None:
+        root_dir = Path(__file__).resolve().parent.parent.parent
+        eval_dir = root_dir / "evaluation_plots"
+        eval_dir.mkdir(exist_ok=True)
     save_file = eval_dir / f"{model_name}_{dataset}_final_images.png"
     torchvision.utils.save_image(grid, save_file)
 
