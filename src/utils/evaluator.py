@@ -18,7 +18,7 @@ class StandaloneGenerativeModelEvaluator:
         self,
         logger,
         dataset_type="2d",  # 2d or image
-        feature_extractor="mobilenet",  # 'mobilenet', 'resnet18', or None
+        feature_extractor="inception",  # 'mobilenet', 'inception', or None
         cache_dir="./weights",
         compute_coverage_precision=True,
         compute_mmd=True,
@@ -59,26 +59,36 @@ class StandaloneGenerativeModelEvaluator:
         """Initialize lightweight feature extractor"""
         if not self.feature_extractor_name or self.dataset_type == "2d":
             return
+        
+        if self.compute_fid or self.feature_extractor_name == "inception":
+            os.environ["TORCH_HOME"] = str(self.cache_dir)
+            
+            # Load Inception-v3 pretrained on ImageNet (standard for FID)
+            model = models.inception_v3(pretrained=True, transform_input=False)
+            
+            # Remove the final classification layers to get features from pool3
+            # This gives us the 2048-dimensional feature vector used in FID
+            self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
+            self.feature_dim = 2048
 
-        if self.compute_fid or self.feature_extractor_name == "mobilenet":
+        elif self.feature_extractor_name == "mobilenet":
             os.environ["TORCH_HOME"] = str(self.cache_dir)
             model = models.mobilenet_v2(pretrained=True)
             self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
             self.feature_dim = 1280
 
-        elif self.feature_extractor_name == "resnet18":
-            os.environ["TORCH_HOME"] = str(self.cache_dir)
-            model = models.resnet18(pretrained=True)
-            self.feature_extractor = nn.Sequential(*list(model.children())[:-1])
-            self.feature_dim = 512
-
         if self.feature_extractor:
             self.feature_extractor.eval()
             self.feature_extractor.to(device)
+            
+            if self.feature_extractor_name == "inception" or self.compute_fid:
+                input_size = 299
+            else:
+                input_size = 224
 
             self.preprocess = transforms.Compose(
                 [
-                    transforms.Resize((224, 224)),
+                    transforms.Resize((input_size, input_size)),
                     transforms.Normalize(
                         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
                     ),
