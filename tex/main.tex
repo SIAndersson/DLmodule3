@@ -146,6 +146,12 @@ We evaluate the models on the Two Moons and FFHQ datasets using the metrics desc
     \label{fig:flow_matching_two_moons_metrics_comparison_optimized}
 \end{figure}
 
+\section{Discussion}
+
+\subsection{Metrics}
+
+It is interesting to compare the metrics of the different models. While the diffusion based models quickly optimize and stabilize the Coverage and Wasserstein distance, the flow matching models need about 100 epochs to reach similar values for the first time, and continue to fluctuate throughout the training process. For the Precision both models need about the same amount of training to reach their potential, but again, the flow matching model fluctuate more during training. Regarding Distance Entropy, both training speed and fluctuation show no significant differences between the model families.
+
 \bibliographystyle{plainnat}
 \bibliography{references}
 
