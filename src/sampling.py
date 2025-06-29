@@ -136,12 +136,21 @@ def get_best_model_for_metric(df, metric):
     direction = get_metric_direction(metric)
     
     if direction == "lower":
-        return df.loc[df[metric].idxmin(), 'model']
+        try:
+            return df.loc[df[metric].idxmin(), 'model_category']
+        except Exception as e:
+            return df.loc[df[metric].idxmin(), 'model']
     elif direction == "zero":
         abs_diff = np.abs(df[metric])
-        return df.loc[abs_diff.idxmin(), 'model']
+        try:
+            return df.loc[abs_diff.idxmin(), 'model_category']
+        except Exception as e:
+            return df.loc[abs_diff.idxmin(), 'model']
     else:  # "higher"
-        return df.loc[df[metric].idxmax(), 'model']
+        try:
+            return df.loc[df[metric].idxmax(), 'model_category']
+        except Exception as e:
+            return df.loc[df[metric].idxmax(), 'model']
     
     
 def get_performance_score(df, metric, model_idx):
@@ -243,7 +252,7 @@ def plot_overview(df, save_path, figsize=(20, 15)):
     df_analysis['overall_score'] = overall_scores
     
     try:
-        sns.boxplot(data=df_analysis, x='type', y='overall_score', hue='optimized', 
+        sns.barplot(data=df_analysis, x='type', y='overall_score', hue='optimized', 
                     palette='Set2')
     except:
         # Fallback: create manual grouped boxplot
@@ -280,7 +289,7 @@ def plot_overview(df, save_path, figsize=(20, 15)):
     markers = ['D' if t == 'diffusion' else 'o' for t in df_ranked['type']]
     
     bars = plt.barh(range(len(df_ranked)), df_ranked['overall_score'], color=colors, alpha=0.8)
-    plt.yticks(range(len(df_ranked)), df_ranked['model'], fontsize=10)
+    plt.yticks(range(len(df_ranked)), df_ranked['model_category'], fontsize=10)
     plt.xlabel('Overall Performance Score')
     plt.title('Model Ranking (Normalized Performance)', fontsize=14, fontweight='bold')
     plt.grid(axis='x', alpha=0.3)
@@ -498,7 +507,7 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
               ncol=len(legend_elements), fontsize=10)
     
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.15)  # Make room for legend
+    #plt.subplots_adjust(bottom=0.15)  # Make room for legend
     plt.savefig(save_path)
     plt.close()
     
@@ -512,7 +521,8 @@ def get_metric_suggestions(df, n=4):
         df: DataFrame with model metrics
         n: Number of metrics to suggest
     """
-    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized']]
+    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized', 'model_category']]
+    log.info(metric_cols)
     
     # Calculate normalized performance variance to find most discriminative metrics
     normalized_data = {}
@@ -613,7 +623,10 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
         save_path: Optional path to save the figure
     """
     # Get metric columns (exclude model, type, optimized, category)
-    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized', 'category']]
+    metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized', 'category', 'model_category']]
+    log.info(metric_cols)
+    
+    df['model_category'] = df['type'] + ' (' + df['optimized'].map({True: 'Opt', False: 'Base'}) + ')'
     
     if not metric_cols:
         log.warning("No metrics found in dataframe!")
@@ -668,7 +681,7 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
     remaining_metrics = [m for m in metric_cols if m not in metric_order]
     metric_order.extend(remaining_metrics)
     
-    metric_order = [m for m in metric_order if m != 'category']
+    metric_order = [m for m in metric_order if m != 'category' and m != 'model_category']
     
     for i, metric in enumerate(metric_order):
         if i >= len(axes_flat):
@@ -705,7 +718,7 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
         
         # Set x-axis labels with smaller font
         ax.set_xticks(range(len(df_sorted)))
-        ax.set_xticklabels(df_sorted['model'], rotation=45, ha='right', fontsize=7)
+        ax.set_xticklabels(df_sorted['category'], rotation=45, ha='right', fontsize=7)
         
         # Add value labels on bars (smaller font)
         for j, (bar, val) in enumerate(zip(bars, df_sorted[metric])):
@@ -751,7 +764,7 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
     
     # Place legend outside the plot area
     fig.legend(handles=legend_elements, loc='center', bbox_to_anchor=(0.5, 0.02), 
-              ncol=min(len(legend_elements), 4), fontsize=9)
+              ncol=len(legend_elements), fontsize=9)
     
     # Add overall title
     fig.suptitle(f'Complete Metric Analysis - All {n_metrics} Metrics\nModels Ranked by Performance', 
