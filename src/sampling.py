@@ -175,7 +175,7 @@ def get_performance_score(df, metric, model_idx):
             log.critical(f"Performance calculation failed. Values are {values} and metric is {metric}.")
             raise e
         
-def plot_overview(df, save_path, figsize=(20, 15)):
+def plot_overview(df, save_path, figsize=(24, 18)):
     """
     Create a comprehensive overview of all metrics with multiple visualizations.
     
@@ -187,16 +187,33 @@ def plot_overview(df, save_path, figsize=(20, 15)):
     # Get metric columns (exclude model, type, optimized)
     metric_cols = [col for col in df.columns if col not in ['model', 'type', 'optimized']]
     
+    # Create figure with more spacing
     fig = plt.figure(figsize=figsize)
+    
+    # Adjust spacing between subplots
+    plt.subplots_adjust(
+        left=0.08,      # left margin
+        bottom=0.08,    # bottom margin
+        right=0.95,     # right margin
+        top=0.93,       # top margin
+        wspace=0.35,    # width spacing between subplots
+        hspace=0.45     # height spacing between subplots
+    )
     
     # 1. Correlation heatmap of all metrics
     plt.subplot(2, 4, 1)
     corr_matrix = df[metric_cols].corr()
+    
+    # Truncate metric names for correlation matrix
+    short_names = [name[:12] + '...' if len(name) > 15 else name for name in metric_cols]
+    corr_matrix.index = short_names
+    corr_matrix.columns = short_names
+    
     sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', center=0, 
-                square=True, cbar_kws={'shrink': 0.8})
-    plt.title('Metric Correlations', fontsize=14, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
+                square=True, cbar_kws={'shrink': 0.6})
+    plt.title('Metric Correlations', fontsize=12, fontweight='bold', pad=15)
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.yticks(rotation=0, fontsize=8)
     
     # 2. Normalized performance by category
     plt.subplot(2, 4, 2)
@@ -224,6 +241,9 @@ def plot_overview(df, save_path, figsize=(20, 15)):
         'score': category_scores
     })
     
+    # Truncate category names
+    cat_df['category'] = cat_df['category'].apply(lambda x: x[:15] + '...' if len(x) > 18 else x)
+    
     try:
         sns.boxplot(data=cat_df, x='category', y='score', palette='Set3')
     except:
@@ -232,9 +252,11 @@ def plot_overview(df, save_path, figsize=(20, 15)):
             cat_data = cat_df[cat_df['category'] == cat]['score']
             plt.boxplot(cat_data, positions=[i], widths=0.6, patch_artist=True)
         plt.xticks(range(len(cat_df['category'].unique())), cat_df['category'].unique())
-    plt.title('Performance by Metric Category', fontsize=14, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.ylabel('Normalized Performance (0-1)')
+    
+    plt.title('Performance by Category', fontsize=12, fontweight='bold', pad=15)
+    plt.xticks(rotation=45, ha='right', fontsize=9)
+    plt.ylabel('Normalized Performance', fontsize=10)
+    plt.tick_params(axis='y', labelsize=9)
     
     # 3. Type and optimization impact
     plt.subplot(2, 4, 3)
@@ -254,6 +276,7 @@ def plot_overview(df, save_path, figsize=(20, 15)):
     try:
         sns.barplot(data=df_analysis, x='type', y='overall_score', hue='optimized', 
                     palette='Set2')
+        plt.legend(fontsize=9, loc='upper right')
     except:
         # Fallback: create manual grouped boxplot
         types = df_analysis['type'].unique()
@@ -277,28 +300,33 @@ def plot_overview(df, save_path, figsize=(20, 15)):
             colors = ['lightcoral', 'lightgreen'] * len(types)
             for patch, color in zip(bp['boxes'], colors[:len(bp['boxes'])]):
                 patch.set_facecolor(color)
-            plt.xticks(positions, labels)
-    plt.title('Overall Performance by Type & Optimization', fontsize=14, fontweight='bold')
-    plt.ylabel('Average Normalized Score')
+            plt.xticks(positions, labels, fontsize=9)
+    
+    plt.title('Performance by Type & Optimization', fontsize=12, fontweight='bold', pad=15)
+    plt.ylabel('Avg Normalized Score', fontsize=10)
+    plt.tick_params(axis='both', labelsize=9)
     
     # 4. Model ranking by overall performance
     plt.subplot(2, 4, 4)
     df_ranked = df_analysis.sort_values('overall_score', ascending=True)
     
     colors = ['lightcoral' if not opt else 'lightgreen' for opt in df_ranked['optimized']]
-    markers = ['D' if t == 'diffusion' else 'o' for t in df_ranked['type']]
     
     bars = plt.barh(range(len(df_ranked)), df_ranked['overall_score'], color=colors, alpha=0.8)
-    plt.yticks(range(len(df_ranked)), df_ranked['model_category'], fontsize=10)
-    plt.xlabel('Overall Performance Score')
-    plt.title('Model Ranking (Normalized Performance)', fontsize=14, fontweight='bold')
+    
+    # Truncate model names for y-axis
+    truncated_names = [name[:20] + '...' if len(name) > 23 else name for name in df_ranked['model_category']]
+    plt.yticks(range(len(df_ranked)), truncated_names, fontsize=9)
+    plt.xlabel('Overall Performance Score', fontsize=10)
+    plt.title('Model Ranking', fontsize=12, fontweight='bold', pad=15)
     plt.grid(axis='x', alpha=0.3)
+    plt.tick_params(axis='x', labelsize=9)
     
     # Add legend
     from matplotlib.patches import Patch
     legend_elements = [Patch(facecolor='lightcoral', alpha=0.8, label='Not Optimized'),
                       Patch(facecolor='lightgreen', alpha=0.8, label='Optimized')]
-    plt.legend(handles=legend_elements, loc='lower right')
+    plt.legend(handles=legend_elements, loc='lower right', fontsize=8)
     
     # 5. Metric leaders by category
     plt.subplot(2, 4, 5)
@@ -314,12 +342,16 @@ def plot_overview(df, save_path, figsize=(20, 15)):
         leaders_df = pd.DataFrame(list(leader_counts.items()), columns=['model', 'count'])
         leaders_df = leaders_df.sort_values('count', ascending=True)
         
+        # Truncate model names
+        truncated_models = [name[:18] + '...' if len(name) > 21 else name for name in leaders_df['model']]
+        
         plt.barh(range(len(leaders_df)), leaders_df['count'], 
                 color=plt.cm.tab10(np.arange(len(leaders_df))))
-        plt.yticks(range(len(leaders_df)), leaders_df['model'])
-        plt.xlabel('Number of Metrics Led')
-        plt.title('Models Leading Most Metrics', fontsize=14, fontweight='bold')
+        plt.yticks(range(len(leaders_df)), truncated_models, fontsize=9)
+        plt.xlabel('Number of Metrics Led', fontsize=10)
+        plt.title('Models Leading Most Metrics', fontsize=12, fontweight='bold', pad=15)
         plt.grid(axis='x', alpha=0.3)
+        plt.tick_params(axis='x', labelsize=9)
     
     # 6. Category-wise performance heatmap
     plt.subplot(2, 4, 6)
@@ -340,16 +372,22 @@ def plot_overview(df, save_path, figsize=(20, 15)):
         heatmap_data.append(row_data)
         heatmap_models.append(model_name)
     
+    # Truncate names for heatmap
+    truncated_models = [name[:15] + '...' if len(name) > 18 else name for name in heatmap_models]
+    truncated_categories = [cat_info['title'].split('(')[0].strip()[:12] + '...' 
+                          if len(cat_info['title'].split('(')[0].strip()) > 15 
+                          else cat_info['title'].split('(')[0].strip()
+                          for cat_info in METRIC_CATEGORIES.values()]
+    
     heatmap_df = pd.DataFrame(heatmap_data, 
-                             index=heatmap_models,
-                             columns=[cat_info['title'].split('(')[0].strip() 
-                                    for cat_info in METRIC_CATEGORIES.values()])
+                             index=truncated_models,
+                             columns=truncated_categories)
     
     sns.heatmap(heatmap_df, annot=True, cmap='RdYlGn', fmt='.2f', 
-                cbar_kws={'shrink': 0.8})
-    plt.title('Performance by Category & Model', fontsize=14, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
+                cbar_kws={'shrink': 0.6}, annot_kws={'size': 8})
+    plt.title('Performance by Category & Model', fontsize=12, fontweight='bold', pad=15)
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.yticks(rotation=0, fontsize=8)
     
     # 7. Optimization impact by category
     plt.subplot(2, 4, 7)
@@ -367,8 +405,11 @@ def plot_overview(df, save_path, figsize=(20, 15)):
                                       df.index.get_loc(model_idx)) for metric in available_metrics]
                         scores.extend(model_scores)
                     
+                    category_name = cat_info['title'].split('(')[0].strip()
+                    truncated_cat = category_name[:12] + '...' if len(category_name) > 15 else category_name
+                    
                     opt_impact_data.append({
-                        'category': cat_info['title'].split('(')[0].strip(),
+                        'category': truncated_cat,
                         'optimized': 'Optimized' if optimized else 'Base',
                         'score': np.mean(scores)
                     })
@@ -378,6 +419,7 @@ def plot_overview(df, save_path, figsize=(20, 15)):
         try:
             sns.barplot(data=opt_df, x='category', y='score', hue='optimized', 
                        palette='Set1')
+            plt.legend(fontsize=9, loc='upper right')
         except:
             # Fallback: manual grouped bar plot
             categories = opt_df['category'].unique()
@@ -393,11 +435,13 @@ def plot_overview(df, save_path, figsize=(20, 15)):
                          for cat in categories]
                 plt.bar(x + i*width, values, width, label=opt_type, 
                        color='lightcoral' if opt_type == 'Base' else 'lightgreen')
-            plt.xticks(x + width/2, categories)
-            plt.legend()
-        plt.title('Optimization Impact by Category', fontsize=14, fontweight='bold')
-        plt.xticks(rotation=45, ha='right')
-        plt.ylabel('Average Performance Score')
+            plt.xticks(x + width/2, categories, fontsize=9)
+            plt.legend(fontsize=9)
+        
+        plt.title('Optimization Impact by Category', fontsize=12, fontweight='bold', pad=15)
+        plt.xticks(rotation=45, ha='right', fontsize=9)
+        plt.ylabel('Avg Performance Score', fontsize=10)
+        plt.tick_params(axis='y', labelsize=9)
     
     # 8. Distribution of metric directions
     plt.subplot(2, 4, 8)
@@ -412,10 +456,16 @@ def plot_overview(df, save_path, figsize=(20, 15)):
         else:
             direction_counts['Closer to Zero'] += 1
     
-    plt.pie(direction_counts.values(), labels=direction_counts.keys(), 
-           autopct='%1.1f%%', startangle=90, colors=['lightcoral', 'lightgreen', 'lightblue'])
-    plt.title('Metric Direction Distribution', fontsize=14, fontweight='bold')
-    plt.savefig(save_path)
+    # Use shorter labels for pie chart
+    short_labels = ['Lower Better', 'Higher Better', 'Closer to Zero']
+    plt.pie(direction_counts.values(), labels=short_labels, 
+           autopct='%1.1f%%', startangle=90, colors=['lightcoral', 'lightgreen', 'lightblue'],
+           textprops={'fontsize': 9})
+    plt.title('Metric Direction Distribution', fontsize=12, fontweight='bold', pad=15)
+    
+    # Save with tight layout and high DPI
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close()
     
 
@@ -507,7 +557,7 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
               ncol=len(legend_elements), fontsize=10)
     
     plt.tight_layout()
-    #plt.subplots_adjust(bottom=0.15)  # Make room for legend
+    plt.subplots_adjust(bottom=0.2)  # Make room for legend
     plt.savefig(save_path)
     plt.close()
     
@@ -767,7 +817,7 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
               ncol=len(legend_elements), fontsize=9)
     
     # Add overall title
-    fig.suptitle(f'Complete Metric Analysis - All {n_metrics} Metrics\nModels Ranked by Performance', 
+    fig.suptitle(f'Complete Metric Analysis - All {n_metrics} Metrics Models Ranked by Performance', 
                 fontsize=16, fontweight='bold', y=0.98)
 
     plt.tight_layout()
