@@ -208,12 +208,16 @@ def plot_overview(df, save_path, figsize=(24, 18)):
     short_names = [name[:12] + '...' if len(name) > 15 else name for name in metric_cols]
     corr_matrix.index = short_names
     corr_matrix.columns = short_names
-    
-    sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', center=0, 
-                square=True, cbar_kws={'shrink': 0.6})
+
+    ax = sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', center=0, 
+                     square=True, cbar_kws={'shrink': 0.6})
     plt.title('Metric Correlations', fontweight='bold', pad=15)
     plt.xticks(rotation=90)
-    plt.yticks(rotation=0)
+    #plt.yticks(rotation=0)
+
+    # Ensure all y-ticks are shown (fix for missing y-ticks)
+    ax.set_yticks(np.arange(len(short_names)) + 0.5)
+    ax.set_yticklabels(short_names, rotation=0)
     
     # 2. Normalized performance by category
     plt.subplot(2, 4, 2)
