@@ -19,7 +19,7 @@
     filecolor=black % Color for file links
 }
 
-\title{Flow Matching vs Diffusion Models: A Comparative Study}
+\title{Flow Matching vs Diffusion Models:\\ A Comparative Study}
 \author{Sebastian Andersson \and Lo Heander \and Andreas Bexell}
 \date{June 2025}
 
@@ -88,7 +88,7 @@ We implement two variants of each model family, Flow Matching and Diffusion. The
 To optimize the hyperparameters of the models, we use the Optuna library~\cite{akiba2019optuna}. Optuna is a hyperparameter optimization framework that uses a tree-structured Parzen estimator to efficiently search the hyperparameter space. We define a search space for each model and dataset, and use Optuna to find the best hyperparameters for each model.
 
 \section{Results}
-We evaluate the models on the Two Moons and FFHQ datasets using the metrics described above. The results are summarized in Table~\ref{tab:results}.
+We evaluate the models on the Two Moons and FFHQ datasets using the metrics described above. The hyperparameters are optimized woth the Optuna framework, and the results of the optimizations are summarized in Table~\ref{tab:results}.
 
 
 \begin{table}[H]
@@ -146,11 +146,42 @@ We evaluate the models on the Two Moons and FFHQ datasets using the metrics desc
     \label{fig:flow_matching_two_moons_metrics_comparison_optimized}
 \end{figure}
 
-\section{Discussion}
+\begin{figure}[tb]
+    \includegraphics[width=0.5\linewidth]{images/generated_samples/diffusion_ffhq_default_epoch=464-train_loss=0.07.ckpt_final_images}
+    \includegraphics[width=0.5\linewidth]{images/generated_samples/diffusion_ffhq_optim_solution4_short_epoch=484-train_loss=0.05.ckpt_final_images}
+    \caption{Comparison between diffusion models with default and optimized hyper parameters, respectively.}
+    \label{fig:diffusion}
+\end{figure}
 
-\subsection{Metrics}
+\begin{figure}[tb]
+    \includegraphics[width=0.5\linewidth]{images/generated_samples/flow_matching_ffhq_default_epoch=981-train_loss=0.24.ckpt_final_images}
+    \includegraphics[width=0.5\linewidth]{images/generated_samples/flow_matching_ffhq_optim_epoch=35-train_loss=0.16.ckpt_final_images}
+    \caption{Comparison between flow matching models with default and optimized hyper parameters, respectively.}
+    \label{fig:flow_matching}
+\end{figure}
 
-It is interesting to compare the metrics of the different models. While the diffusion based models quickly optimize and stabilize the Coverage and Wasserstein distance, the flow matching models need about 100 epochs to reach similar values for the first time, and continue to fluctuate throughout the training process. For the Precision both models need about the same amount of training to reach their potential, but again, the flow matching model fluctuate more during training. Regarding Distance Entropy, both training speed and fluctuation show no significant differences between the model families.
+\begin{figure}[tb]
+    \includegraphics[width=\linewidth]{images/final_results/selected_metrics_comparison}
+    \caption{Metrics comparisons of the models on the FFHQ dataset.}
+    \label{fig:metrics}
+\end{figure}
+
+
+
+\section{Metrics and quality of generated images}
+
+It is interesting to compare the metrics of the different models. While the diffusion based models quickly optimize and stabilize the Coverage and Wasserstein distance, the flow matching models need about 100 epochs to reach similar values for the first time, and continue to fluctuate throughout the training process. For the Precision both models need about the same amount of training to reach their potential, but again, the flow matching model fluctuate more during training. Regarding Distance Entropy, both training speed and fluctuation show no significant differences between the model families. See figures \ref{fig:diffusion_two_moons_metrics_comparison_optimized} and \ref{fig:flow_matching_two_moons_metrics_comparison_optimized}.
+
+The difference in optimization behaviour is interesting because in our implementation, both models use the AdamW optimizer with identical parameter configuration behaviour. We can speculate that the behaviour could have been different using a different optimizer, for exampel MUON.
+
+Looking at a wider range of metrics, we see that many metrics correlate very closely to each other, and there might be more available metrics than actually needed. (TODO: include the mosaic of metrics correlations?)
+
+It is also clear that even though the metrics are very similar for the synthetic double moons dataset, the performance of the models are vastly different on the data set of real images. With default parameters, the diffusion model only transforms white noise to pink noise, with some clustering of colors. With optimized hyperparameters, it sometimes manages to produce something more similar to a photographic image that failed because of motion blur or bad light conditions. See figure \ref{fig:diffusion}.
+
+On the other hand, the flow matching model produces something more akin to clusters from an extremely out-of-focus image already with default hyperparameters. With optimized hyperparameters, we have definetly entered the uncanny valley, and the generated images are recognizable as distorted protraits of human beings. See figure \ref{fig:flow_matching}.
+
+It is interesting, then, to compare these ocular assessments with the metrics in figure \ref{fig:metrics}. While optimized flow matching is the best performer according to all metrics, the difference for some metrics are quite small. Precision seems to agree with the intuitive assessment, and FID accurately gauges the distance smallest for the optimized flow matching model and furthest by far for the unoptimized diffusion model. The distance entropy correctly scores the optimized flow model as the best performer, but surprisingly puts the unoptimized diffusion model in second place. All models rank very low in Coverage.
+
 
 \bibliographystyle{plainnat}
 \bibliography{references}
