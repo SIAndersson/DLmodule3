@@ -212,12 +212,12 @@ def plot_overview(df, save_path, figsize=(24, 18)):
     ax = sns.heatmap(corr_matrix, annot=False, cmap='coolwarm', center=0, 
                      square=True, cbar_kws={'shrink': 0.6})
     plt.title('Metric Correlations', fontweight='bold', pad=15)
-    plt.xticks(rotation=90)
-    #plt.yticks(rotation=0)
+    #plt.xticks(rotation=90)
+    plt.yticks(rotation=0, fontsize=9)
 
     # Ensure all y-ticks are shown (fix for missing y-ticks)
-    ax.set_yticks(np.arange(len(short_names)) + 0.5)
-    ax.set_yticklabels(short_names, rotation=0)
+    ax.set_xticks(np.arange(len(short_names)) + 0.5)
+    ax.set_xticklabels(short_names, rotation=90, fontsize=9)
     
     # 2. Normalized performance by category
     plt.subplot(2, 4, 2)
@@ -513,7 +513,7 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
                                        alpha=0.8, edgecolor='gold', linewidth=3, 
                                        label='Best Performer'))
     
-    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.08),
+    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.03),
               ncol=len(legend_elements), fontsize=10)
     
     plt.tight_layout()
