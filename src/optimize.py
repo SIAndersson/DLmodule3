@@ -268,27 +268,43 @@ def run_optimization():
 
     max_retries = 10
 
-    if cfg.model.generative_model == "flow_matching":
-        study_name = f"flowmatching_{secondary_objective}_optuna_study"
-        storage_url = cfg.main.get(
-            "postgresql_url", "postgresql://x_sofan@localhost/flowmatching_study_db"
-        )
+    # Allow user to select storage backend: "postgresql" or "sqlite"
+    storage_backend = cfg.main.get("optuna_storage_backend", "sqlite").lower()
+    if storage_backend == "sqlite":
+        if cfg.model.generative_model == "flow_matching":
+            study_name = f"flowmatching_{secondary_objective}_optuna_study"
+            storage_url = cfg.main.get(
+                "sqlite_url", "sqlite:///flowmatching_study_db.db"
+            )
+        else:
+            study_name = f"diffusion_{secondary_objective}_optuna_study"
+            storage_url = cfg.main.get(
+                "sqlite_url", "sqlite:///diffusion_study_db.db"
+            )
+        # For sqlite, no engine_kwargs needed
+        storage = RDBStorage(url=storage_url)
     else:
-        study_name = f"diffusion_{secondary_objective}_optuna_study"
-        storage_url = cfg.main.get(
-            "postgresql_url", "postgresql://x_sofan@localhost/diffusion_study_db"
-        )
+        if cfg.model.generative_model == "flow_matching":
+            study_name = f"flowmatching_{secondary_objective}_optuna_study"
+            storage_url = cfg.main.get(
+                "postgresql_url", "postgresql://x_sofan@localhost/flowmatching_study_db"
+            )
+        else:
+            study_name = f"diffusion_{secondary_objective}_optuna_study"
+            storage_url = cfg.main.get(
+                "postgresql_url", "postgresql://x_sofan@localhost/diffusion_study_db"
+            )
 
-    for attempt in range(max_retries):
-        try:
-            storage = RDBStorage(url=storage_url, engine_kwargs={"pool_pre_ping": True})
-            break
-        except Exception as e:
-            print(f"Connection attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(5)
-            else:
-                raise
+        for attempt in range(max_retries):
+            try:
+                storage = RDBStorage(url=storage_url, engine_kwargs={"pool_pre_ping": True})
+                break
+            except Exception as e:
+                print(f"Connection attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(5)
+                else:
+                    raise
 
     # Create multiobjective study
     study = optuna.create_study(
