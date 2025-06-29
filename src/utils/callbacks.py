@@ -709,6 +709,28 @@ def create_evaluation_config(
             "k_nearest": 5,
             "mmd_kernel": "rbf",
         }
+    elif evaluation_level == "optim":
+        # Only optim relevant evaluation suite
+        return {
+            "logger": log,
+            "model_type": model_type,
+            "dataset_type": data_type,
+            "eval_every_n_epochs": 10 if data_type == "image" else 5,
+            "num_samples": 1000,
+            "feature_extractor": "mobilenet" if data_type == "image" else None,
+            "cache_dir": "./weights",
+            "compute_coverage_precision": True,
+            "compute_mmd": False,
+            "compute_wasserstein": False,
+            "compute_js_divergence": False,
+            "compute_energy_distance": False,
+            "compute_density_consistency": False,
+            "compute_mode_collapse": False,
+            "compute_diversity_metrics": False,
+            "compute_fid": True,
+            "k_nearest": 5,
+            "mmd_kernel": "rbf",
+        }
     elif evaluation_level == "rarely":
         # Small and occasional suite
         return {

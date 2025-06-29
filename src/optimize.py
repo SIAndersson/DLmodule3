@@ -35,7 +35,7 @@ class MultiObjectiveMedianPrunerCallback(Callback):
         self,
         trial: optuna.Trial,
         primary_monitor: str = "train_loss",
-        secondary_monitor: str = "eval/fid",
+        secondary_monitor: str = "eval/precision",
         n_startup_trials: int = 10,
         n_warmup_steps: int = 10,
         interval_steps: int = 5,
@@ -144,6 +144,8 @@ def objective(trial):
             cfg = hydra.compose(
                 config_name="config", overrides=[*overrides, *cli_overrides]
             )
+            
+        secondary_objective = cfg.main.get("optim_objective", "precision")
 
         set_seed(cfg.main.seed)
 
@@ -171,7 +173,7 @@ def objective(trial):
             MultiObjectiveMedianPrunerCallback(
                 trial,
                 primary_monitor="train_loss",
-                secondary_monitor="eval/fid",
+                secondary_monitor=f"eval/{secondary_objective}",
                 n_startup_trials=5,
                 n_warmup_steps=10,
                 interval_steps=1,
@@ -225,29 +227,29 @@ def objective(trial):
         except optuna.TrialPruned as e:
             log.error(f"Trial pruned: {e}")
             train_loss = trainer.callback_metrics.get("train_loss", None)
-            eval_fid = trainer.callback_metrics.get("eval/fid", None)
+            eval_precision = trainer.callback_metrics.get(f"eval/{secondary_objective}", None)
 
             # Fallback to large values if missing or not a number
             if train_loss is None or not hasattr(train_loss, "item"):
                 train_loss_value = 1e10
             else:
                 train_loss_value = train_loss.item()
-            if eval_fid is None or not hasattr(eval_fid, "item"):
-                eval_fid_value = 1e10
+            if eval_precision is None or not hasattr(eval_precision, "item"):
+                eval_precision_value = 0.0 if secondary_objective == "precision" else 10e10
             else:
-                eval_fid_value = eval_fid.item()
+                eval_precision_value = eval_precision.item()
 
-            return train_loss_value, eval_fid_value
+            return train_loss_value, eval_precision_value
         except Exception as e:
             log.error(f"Training failed: {e}")
-            return 1e10, 1e10
+            return 1e10, 0.0 if secondary_objective == "precision" else 10e10
 
         # Return both objectives for multiobjective optimization
         print(f"Callback metrics: {trainer.callback_metrics}")
         train_loss = trainer.callback_metrics["train_loss"].item()
-        eval_fid = trainer.callback_metrics["eval/fid"].item()
+        eval_precision = trainer.callback_metrics[f"eval/{secondary_objective}"].item()
 
-        return train_loss, eval_fid
+        return train_loss, eval_precision
 
     finally:
         # Clean up temporary file
@@ -261,16 +263,18 @@ def run_optimization():
     with hydra.initialize(config_path="conf", version_base=None):
         cli_overrides = [arg for arg in sys.argv[1:] if "=" in arg]
         cfg = hydra.compose(config_name="config", overrides=[*cli_overrides])
+        
+    secondary_objective = cfg.main.get("optim_objective", "precision")
 
     max_retries = 10
 
     if cfg.model.generative_model == "flow_matching":
-        study_name = "flowmatching_64_optuna_study"
+        study_name = f"flowmatching_{secondary_objective}_optuna_study"
         storage_url = cfg.main.get(
             "postgresql_url", "postgresql://x_sofan@localhost/flowmatching_study_db"
         )
     else:
-        study_name = "diffusion_64_optuna_study"
+        study_name = f"diffusion_{secondary_objective}_optuna_study"
         storage_url = cfg.main.get(
             "postgresql_url", "postgresql://x_sofan@localhost/diffusion_study_db"
         )
@@ -290,7 +294,7 @@ def run_optimization():
     study = optuna.create_study(
         study_name=study_name,
         storage=storage,
-        directions=["minimize", "minimize"],  # minimize both train_loss and eval_fid
+        directions=["minimize", "maximize" if secondary_objective == "precision" else "minimize"],  # minimize both train_loss and eval/precision
         sampler=optuna.samplers.TPESampler(),  # Changed to TPESampler as it is faster in the current version of Optuna (4.4.0)
         load_if_exists=True,
     )
@@ -305,10 +309,10 @@ def run_optimization():
     print("=" * 60)
 
     for i, trial in enumerate(pareto_front):
-        train_loss, eval_fid = trial.values
+        train_loss, eval_precision = trial.values
         print(f"Solution {i + 1}:")
         print(f"  Train Loss: {train_loss:.4f}")
-        print(f"  Eval FID: {eval_fid:.4f}")
+        print(f"  Eval {secondary_objective}: {eval_precision:.4f}")
         print("  Parameters:")
         for key, value in trial.params.items():
             print(f"    {key}: {value}")
@@ -316,29 +320,29 @@ def run_optimization():
 
     # Save detailed results
     df = study.trials_dataframe()
-    df.to_csv(f"{study_name}_multiobjective_optuna_results.csv")
+    df.to_csv(f"{study_name}_{secondary_objective}_multiobjective_optuna_results.csv")
 
     # Create Pareto front visualization
-    create_pareto_plot(study, study_name)
+    create_pareto_plot(study, study_name, secondary_objective)
 
     return study
 
 
-def create_pareto_plot(study, study_name):
+def create_pareto_plot(study, study_name, secondary_objective):
     """Create a visualization of the Pareto front"""
     try:
         import matplotlib.pyplot as plt
 
         # Get all trial results
         train_losses = []
-        eval_fids = []
+        eval_precisions = []
         is_pareto = []
 
         for trial in study.trials:
             if trial.state == optuna.trial.TrialState.COMPLETE:
-                train_loss, eval_fid = trial.values
+                train_loss, eval_precision = trial.values
                 train_losses.append(train_loss)
-                eval_fids.append(eval_fid)
+                eval_precisions.append(eval_precision)
                 is_pareto.append(trial in study.best_trials)
 
         # Create plot
@@ -346,12 +350,12 @@ def create_pareto_plot(study, study_name):
 
         # Plot all trials
         non_pareto_train = [tl for tl, ip in zip(train_losses, is_pareto) if not ip]
-        non_pareto_fid = [ef for ef, ip in zip(eval_fids, is_pareto) if not ip]
+        non_pareto_precision = [ef for ef, ip in zip(eval_precisions, is_pareto) if not ip]
         non_pareto_train = [x for x in non_pareto_train if x < 1e10]
-        non_pareto_fid = [x for x in non_pareto_fid if x < 1e10]
+        non_pareto_precision = [x for x in non_pareto_precision if x < 1e10]
         plt.scatter(
             non_pareto_train,
-            non_pareto_fid,
+            non_pareto_precision,
             alpha=0.6,
             color="lightblue",
             label="All trials",
@@ -359,21 +363,21 @@ def create_pareto_plot(study, study_name):
 
         # Plot Pareto front
         pareto_train = [tl for tl, ip in zip(train_losses, is_pareto) if ip]
-        pareto_fid = [ef for ef, ip in zip(eval_fids, is_pareto) if ip]
+        pareto_precision = [ef for ef, ip in zip(eval_precisions, is_pareto) if ip]
 
         pareto_train = [x for x in pareto_train if x < 1e10]
-        pareto_fid = [x for x in pareto_fid if x < 1e10]
+        pareto_precision = [x for x in pareto_precision if x < 1e10]
         plt.scatter(
-            pareto_train, pareto_fid, color="red", s=100, label="Pareto front", zorder=5
+            pareto_train, pareto_precision, color="red", s=100, label="Pareto front", zorder=5
         )
 
         plt.xlabel("Train Loss")
-        plt.ylabel("Eval FID")
+        plt.ylabel(f"Eval {secondary_objective}")
         plt.title("Multiobjective Optimization Results")
         plt.legend()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(f"{study_name}_pareto_front.pdf", dpi=300, bbox_inches="tight", format="pdf")
+        plt.savefig(f"{study_name}_{secondary_objective}_pareto_front.pdf", dpi=300, bbox_inches="tight", format="pdf")
         plt.show()
 
     except ImportError:
@@ -382,14 +386,14 @@ def create_pareto_plot(study, study_name):
         )
 
 
-def select_best_solution(study, train_loss_weight=0.5, fid_weight=0.5):
+def select_best_solution(study, train_loss_weight=0.5, precision_weight=0.5):
     """
     Select the best solution from Pareto front using weighted approach
 
     Args:
         study: Optuna study object
         train_loss_weight: Weight for train loss (0-1)
-        fid_weight: Weight for FID score (0-1)
+        precision_weight: Weight for precision score (0-1)
     """
     pareto_trials = study.best_trials
 
@@ -398,26 +402,36 @@ def select_best_solution(study, train_loss_weight=0.5, fid_weight=0.5):
 
     # Normalize objectives to [0, 1] range for fair weighting
     train_losses = [trial.values[0] for trial in pareto_trials]
-    eval_fids = [trial.values[1] for trial in pareto_trials]
+    eval_precisions = [trial.values[1] for trial in pareto_trials]
 
     min_train_loss, max_train_loss = min(train_losses), max(train_losses)
-    min_eval_fid, max_eval_fid = min(eval_fids), max(eval_fids)
+    min_eval_precision, max_eval_precision = min(eval_precisions), max(eval_precisions)
 
     best_trial = None
     best_score = float("inf")
 
     for trial in pareto_trials:
-        train_loss, eval_fid = trial.values
+        train_loss, eval_precision = trial.values
 
         # Normalize to [0, 1]
         norm_train_loss = (train_loss - min_train_loss) / (
             max_train_loss - min_train_loss + 1e-8
         )
-        norm_eval_fid = (eval_fid - min_eval_fid) / (max_eval_fid - min_eval_fid + 1e-8)
+        # Support both minimization (e.g., loss) and maximization (e.g., precision)
+        # For minimization: lower is better, so normalized as (x - min) / (max - min)
+        # For maximization: higher is better, so normalized as (max - x) / (max - min)
+        # Here, we assume train_loss is to be minimized and eval_precision is to be maximized
+
+        # Normalize eval_precision so that lower is better (for weighted sum minimization)
+        if secondary_objective == "precision":
+            norm_eval_precision = (max_eval_precision - eval_precision) / (max_eval_precision - min_eval_precision + 1e-8)
+        # Normalize FID the same way as loss
+        else:
+            norm_eval_precision = (eval_precision - min_eval_precision) / (max_eval_precision - min_eval_precision + 1e-8)
 
         # Weighted combination
         combined_score = (
-            train_loss_weight * norm_train_loss + fid_weight * norm_eval_fid
+            train_loss_weight * norm_train_loss + precision_weight * norm_eval_precision
         )
 
         if combined_score < best_score:
@@ -425,10 +439,10 @@ def select_best_solution(study, train_loss_weight=0.5, fid_weight=0.5):
             best_trial = trial
 
     print(
-        f"\nSelected best solution (weights: train_loss={train_loss_weight}, fid={fid_weight}):"
+        f"\nSelected best solution (weights: train_loss={train_loss_weight}, {secondary_objective}={precision_weight}):"
     )
     print(f"  Train Loss: {best_trial.values[0]:.4f}")
-    print(f"  Eval FID: {best_trial.values[1]:.4f}")
+    print(f"  Eval {secondary_objective}: {best_trial.values[1]:.4f}")
     print("  Parameters:")
     for key, value in best_trial.params.items():
         print(f"    {key}: {value}")
@@ -441,10 +455,10 @@ if __name__ == "__main__":
 
     # You can select the best solution based on your preferences
     # Option 1: Equal weighting
-    best_equal = select_best_solution(study, train_loss_weight=0.5, fid_weight=0.5)
+    best_equal = select_best_solution(study, train_loss_weight=0.5, precision_weight=0.5)
 
-    # Option 2: Prioritize image quality (FID)
-    best_quality = select_best_solution(study, train_loss_weight=0.3, fid_weight=0.7)
+    # Option 2: Prioritize image quality (precision)
+    best_quality = select_best_solution(study, train_loss_weight=0.3, precision_weight=0.7)
 
     # Option 3: Prioritize training stability (loss)
-    best_stability = select_best_solution(study, train_loss_weight=0.7, fid_weight=0.3)
+    best_stability = select_best_solution(study, train_loss_weight=0.7, precision_weight=0.3)
