@@ -113,18 +113,15 @@ def objective(trial):
     """Multiobjective optimization function"""
     # Sample hyperparameters
     suggested_params = {
-        "model.lr": trial.suggest_float("model.lr", 1e-5, 1e-2, log=True),
+        "model.lr": trial.suggest_float("model.lr", 1e-5, 1e-3, log=True),
         "model.weight_decay": trial.suggest_float(
-            "model.weight_decay", 1e-4, 1e-2, log=True
-        ),
-        "main.batch_size": trial.suggest_categorical(
-            "main.batch_size", [128, 256, 512]
+            "model.weight_decay", 1e-6, 1e-3, log=True
         ),
         "model.hidden_dim": trial.suggest_categorical(
-            "model.hidden_dim", [64, 128, 256, 512]
+            "model.hidden_dim", [64, 96, 128, 160, 192, 256]
         ),
         "model.num_layers": trial.suggest_categorical(
-            "model.num_layers", [2, 4, 6, 8, 10, 12, 15]
+            "model.num_layers", [1, 2, 3, 4]
         ),
     }
 
@@ -276,23 +273,23 @@ def run_optimization():
     storage_backend = cfg.main.get("optuna_storage_backend", "sqlite").lower()
     if storage_backend == "sqlite":
         if cfg.model.generative_model == "flow_matching":
-            study_name = f"flowmatching_{secondary_objective}_optuna_study"
+            study_name = f"flowmatching_{secondary_objective}_unet_optuna_study"
             storage_url = cfg.main.get(
                 "sqlite_url", "sqlite:///flowmatching_study_db.db"
             )
         else:
-            study_name = f"diffusion_{secondary_objective}_optuna_study"
+            study_name = f"diffusion_{secondary_objective}_unet_optuna_study"
             storage_url = cfg.main.get("sqlite_url", "sqlite:///diffusion_study_db.db")
         # For sqlite, no engine_kwargs needed
         storage = RDBStorage(url=storage_url)
     else:
         if cfg.model.generative_model == "flow_matching":
-            study_name = f"flowmatching_{secondary_objective}_optuna_study"
+            study_name = f"flowmatching_{secondary_objective}_unet_optuna_study"
             storage_url = cfg.main.get(
                 "postgresql_url", "postgresql://x_sofan@localhost/flowmatching_study_db"
             )
         else:
-            study_name = f"diffusion_{secondary_objective}_optuna_study"
+            study_name = f"diffusion_{secondary_objective}_unet_optuna_study"
             storage_url = cfg.main.get(
                 "postgresql_url", "postgresql://x_sofan@localhost/diffusion_study_db"
             )
@@ -421,7 +418,7 @@ def create_pareto_plot(study, study_name, secondary_objective):
         )
 
 
-def select_best_solution(study, train_loss_weight=0.5, precision_weight=0.5):
+def select_best_solution(study, secondary_objective = "precision", train_loss_weight=0.5, precision_weight=0.5):
     """
     Select the best solution from Pareto front using weighted approach
 
@@ -495,15 +492,15 @@ if __name__ == "__main__":
     # You can select the best solution based on your preferences
     # Option 1: Equal weighting
     best_equal = select_best_solution(
-        study, train_loss_weight=0.5, precision_weight=0.5
+        study, secondary_objective = "fid", train_loss_weight=0.5, precision_weight=0.5
     )
 
     # Option 2: Prioritize image quality (precision)
     best_quality = select_best_solution(
-        study, train_loss_weight=0.3, precision_weight=0.7
+        study, secondary_objective = "fid", train_loss_weight=0.3, precision_weight=0.7
     )
 
     # Option 3: Prioritize training stability (loss)
     best_stability = select_best_solution(
-        study, train_loss_weight=0.7, precision_weight=0.3
+        study, secondary_objective = "fid", train_loss_weight=0.7, precision_weight=0.3
     )

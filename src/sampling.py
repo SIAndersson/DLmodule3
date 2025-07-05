@@ -1021,11 +1021,12 @@ def main():
     checkpoints = find_checkpoints()
     for checkpoint in checkpoints:
         model_parts = checkpoint.split("/")[-4:]
+        log.info(f"Creating samples for checkpoint {model_parts}")
         if model_parts[0] == "diffusion":
             model = DiffusionModel.load_from_checkpoint(checkpoint).to(device)
         else:
             model = FlowMatching.load_from_checkpoint(checkpoint).to(device)
-        log.info(f"Creating samples for checkpoint {model_parts}")
+        
         final_samples = model.sample_from_noise(persistent_noise, device)
         save_image_samples(
             final_samples, model_parts[0], "_".join(model_parts[1:]), eval_dir=eval_dir
@@ -1034,9 +1035,9 @@ def main():
         eval_metrics = evaluator.evaluate(final_samples)
 
         if "solution1" in model_parts[-2]:
+            model_parts[-2] = model_parts[-2].replace("_solution1", "")
+        elif "solution2" in model_parts[-2]:
             model_parts[-2] = f"{model_parts[-2]}_test"
-        elif "solution4" in model_parts[-2]:
-            model_parts[-2] = model_parts[-2].replace("_solution4", "")
         model_name = f"{model_parts[0]}_{model_parts[-2]}"
         metrics_dict[model_name] = eval_metrics
 

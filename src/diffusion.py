@@ -23,7 +23,7 @@ from utils.callbacks import (
     create_model_checkpoint_callback,
 )
 from utils.dataset import GenerativeDataModule
-from utils.models import CNN, MLP
+from utils.models import CNN, MLP, UNet
 from utils.seeding import set_seed
 from utils.visualisation import (
     create_metrics_summary_table,
@@ -123,6 +123,16 @@ class DiffusionModel(pl.LightningModule, EvaluationMixin):
                 hidden_dim=self.hidden_dim,
                 num_layers=self.num_layers,
                 model_type="noise_predictor",
+            )
+        elif model_cfg.model_type.upper() == "UNET":
+            self.model = UNet(
+                input_channels=3,
+                time_emb_dim=self.time_embed_dim,
+                base_channels=self.hidden_dim,
+                channel_mult=[1, 2, 2, 4],
+                num_res_blocks=self.num_layers,
+                attention_resolutions=[16, 8],
+                dropout=0.1,
             )
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")

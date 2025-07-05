@@ -118,7 +118,7 @@ class StandaloneGenerativeModelEvaluator:
                 self.logger.info(
                     f"BEFORE TRANSFORM: Batch min {batch.min()}. Batch max {batch.max()}."
                 )
-                if batch.min() < 0 and self.feature_extractor_name != "inception":
+                if batch.min() < 0:
                     batch = (batch + 1) / 2  # Convert from [-1,1] to [0,1]
 
                 # Ensure RGB format

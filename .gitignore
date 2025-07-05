@@ -216,6 +216,7 @@ weights/
 evaluation_plots/
 eval_outputs/
 model_checkpoints/
+old_checkpoints/
 checkpoints/
 multi_seed_results/
 # Only ignore root directory pngs
