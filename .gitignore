@@ -221,7 +221,15 @@ checkpoints/
 multi_seed_results/
 # Only ignore root directory pngs
 /*.png
+*.db
+logfile
+pg_logfile
+*.csv
 
+# Ignore all PNGs
+*.png
+# But keep PNGs with "unet" in the filename
+!*unet*.png
 
 # Tex stuff
 *.acn
