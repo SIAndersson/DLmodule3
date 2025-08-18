@@ -1034,9 +1034,15 @@ def main():
         log.info(f"Images saved for model {model_parts}. Now evaluating...")
         eval_metrics = evaluator.evaluate(final_samples)
 
-        if "solution1" in model_parts[-2]:
-            model_parts[-2] = model_parts[-2].replace("_solution1", "")
-        elif "solution2" in model_parts[-2]:
+        if "solution4" in model_parts[-2] and "diffusion" in model_parts[0]:
+            log.critical(f"Found solution4 model {model_parts}")
+            model_parts[-2] = model_parts[-2].replace("_solution4", "optim")
+        elif "solution1" in model_parts[-2] and "flow" in model_parts[0]:
+            log.critical(f"Found solution1 model {model_parts}")
+            model_parts[-2] = model_parts[-2].replace("_solution1", "optim")
+        elif "solution" in model_parts[-2]:
+            model_parts[-2] = f"{model_parts[-2]}_test"
+        elif "unet" not in model_parts[-2]:
             model_parts[-2] = f"{model_parts[-2]}_test"
         model_name = f"{model_parts[0]}_{model_parts[-2]}"
         metrics_dict[model_name] = eval_metrics
