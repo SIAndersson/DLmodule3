@@ -159,6 +159,47 @@ def get_performance_score(df, metric, model_idx):
             raise e
 
 
+def create_short_labels(df):
+    """Create shorter labels for visualization"""
+    label_mapping = {
+        'Base': 'Base',
+        '50/50 FID/loss': '50/50',
+        '70/30 FID/loss': '70/30',
+    }
+    
+    def shorten_label(row):
+        model_type = row['type']  # 'fm' or 'diff'
+        optimized = row['optimized']
+        
+        if not optimized:
+            return f"{model_type} (Base)"
+        
+        solution = str(row.get('solution', 'default'))
+        short_solution = label_mapping[solution]
+        
+        return f"{model_type} ({short_solution})"
+    
+    return df.apply(shorten_label, axis=1)
+
+
+def create_detailed_legend(df):
+    """Create detailed legend with full explanation"""
+    legend_details = {}
+    
+    for _, row in df.iterrows():
+        short_label = create_short_labels(pd.DataFrame([row])).item()
+        
+        model_type_full = "FM" if row['type'] == 'fm' else "Diffusion"
+        if not row['optimized']:
+            full_desc = f"{model_type_full} (Base)"
+        else:
+            solution = str(row.get('solution', 'default'))
+            full_desc = f"{model_type_full} ({solution})"
+        
+        legend_details[short_label] = full_desc
+    
+    return legend_details
+
 def plot_overview(df, save_path, figsize=(24, 18)):
     """
     Create a comprehensive overview of all metrics with multiple visualizations.
@@ -170,7 +211,7 @@ def plot_overview(df, save_path, figsize=(24, 18)):
     """
     # Get metric columns (exclude model, type, optimized)
     metric_cols = [
-        col for col in df.columns if col not in ["model", "type", "optimized"]
+        col for col in df.columns if col not in ["model", "type", "optimized", "solution", "model_category", "category"]
     ]
 
     # Create figure with more spacing
@@ -219,9 +260,7 @@ def plot_overview(df, save_path, figsize=(24, 18)):
     model_names = []
     categories = []
 
-    df["model_category"] = (
-        df["type"] + " (" + df["optimized"].map({True: "Opt", False: "Base"}) + ")"
-    )
+    df["model_category"] = create_short_labels(df)
 
     for model_idx in range(len(df)):
         model_name = df.iloc[model_idx]["model_category"]
@@ -503,9 +542,7 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
     axes = axes.flatten()
 
     # Create a combined category for better visualization
-    df["category"] = (
-        df["type"] + " (" + df["optimized"].map({True: "Opt", False: "Base"}) + ")"
-    )
+    df["category"] = create_short_labels(df)
 
     # Color palette for categories
     categories = df["category"].unique()
@@ -577,7 +614,9 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
         bars[0].set_linewidth(3)
 
     # Create shared legend
-    legend_elements = [
+    legend_details = create_detailed_legend(df)
+    
+    """legend_elements = [
         plt.Rectangle(
             (0, 0),
             1,
@@ -589,7 +628,20 @@ def plot_4_metrics(df, metrics, save_path, figsize=(15, 12)):
             label=cat,
         )
         for cat in categories
-    ]
+    ]"""
+    legend_elements = []
+    for cat in categories:
+        full_description = legend_details.get(cat, cat)
+        legend_elements.append(
+            plt.Rectangle(
+                (0, 0), 1, 1,
+                facecolor=color_map[cat],
+                alpha=0.8,
+                edgecolor="black",
+                linewidth=0.5,
+                label=f"{full_description}" if len(full_description) < 30 else cat
+            )
+        )
     legend_elements.append(
         plt.Rectangle(
             (0, 0),
@@ -629,7 +681,7 @@ def get_metric_suggestions(df, n=4):
     metric_cols = [
         col
         for col in df.columns
-        if col not in ["model", "type", "optimized", "model_category"]
+        if col not in ["model", "type", "optimized", "model_category", "category", "solution"]
     ]
     log.info(metric_cols)
 
@@ -737,13 +789,11 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
     metric_cols = [
         col
         for col in df.columns
-        if col not in ["model", "type", "optimized", "category", "model_category"]
+        if col not in ["model", "type", "optimized", "category", "model_category", "solution"]
     ]
     log.info(metric_cols)
 
-    df["model_category"] = (
-        df["type"] + " (" + df["optimized"].map({True: "Opt", False: "Base"}) + ")"
-    )
+    df["model_category"] = create_short_labels(df)
 
     if not metric_cols:
         log.warning("No metrics found in dataframe!")
@@ -776,12 +826,7 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
 
     # Create a combined category for better visualization
     df_work = df.copy()
-    df_work["category"] = (
-        df_work["type"]
-        + " ("
-        + df_work["optimized"].map({True: "Opt", False: "Base"})
-        + ")"
-    )
+    df_work["category"] = create_short_labels(df_work)
 
     # Color palette for categories
     categories = df_work["category"].unique()
@@ -886,20 +931,20 @@ def plot_all_metrics(df, cols=4, figsize_per_plot=(4, 3), save_path=None):
         axes_flat[i].set_visible(False)
 
     # Create comprehensive legend
+    legend_details = create_detailed_legend(df_work)
     legend_elements = []
 
     # Add category colors
     for cat in categories:
+        full_description = legend_details.get(cat, cat)
         legend_elements.append(
             plt.Rectangle(
-                (0, 0),
-                1,
-                1,
+                (0, 0), 1, 1,
                 facecolor=color_map[cat],
                 alpha=0.8,
                 edgecolor="black",
                 linewidth=0.5,
-                label=cat,
+                label=f"{full_description}" if len(full_description) < 30 else cat
             )
         )
 
@@ -982,7 +1027,6 @@ def find_checkpoints():
             matches.append(os.path.join(root, filename))
     return matches
 
-
 def main():
     # Find appropriate values
     if torch.cuda.is_available():
@@ -1034,14 +1078,24 @@ def main():
         log.info(f"Images saved for model {model_parts}. Now evaluating...")
         eval_metrics = evaluator.evaluate(final_samples)
 
+        # Solution 4+5 diffusion is the best, ignore rest of solutions
         if "solution4" in model_parts[-2] and "diffusion" in model_parts[0]:
             log.critical(f"Found solution4 model {model_parts}")
-            model_parts[-2] = model_parts[-2].replace("_solution4", "optim")
+            model_parts[-2] = f"{model_parts[-2]}_optim"
+        elif "solution5" in model_parts[-2] and "diffusion" in model_parts[0]:
+            log.critical(f"Found solution5 model {model_parts}")
+            model_parts[-2] = f"{model_parts[-2]}_optim"
+        # Solution 1+2 flow is the best, ignore rest of solutions
         elif "solution1" in model_parts[-2] and "flow" in model_parts[0]:
             log.critical(f"Found solution1 model {model_parts}")
-            model_parts[-2] = model_parts[-2].replace("_solution1", "optim")
+            model_parts[-2] = f"{model_parts[-2]}_optim"
+        elif "solution2" in model_parts[-2] and "flow" in model_parts[0]:
+            log.critical(f"Found solution2 model {model_parts}")
+            model_parts[-2] = f"{model_parts[-2]}_optim"
+        # Ignore other solutions, UNET or not
         elif "solution" in model_parts[-2]:
             model_parts[-2] = f"{model_parts[-2]}_test"
+        # Ignore non-unet models
         elif "unet" not in model_parts[-2]:
             model_parts[-2] = f"{model_parts[-2]}_test"
         model_name = f"{model_parts[0]}_{model_parts[-2]}"
@@ -1056,6 +1110,9 @@ def main():
     df_full["test"] = df_full["model"].apply(
         lambda x: True if any(sub in x for sub in ["test", "short"]) else False
     )
+    df_full["solution"] = df_full["model"].apply(
+        lambda x: "50/50 FID/loss" if "solution4" in x else "70/30 FID/loss" if "solution5" in x else "50/50 FID/loss" if "solution1" in x else "70/30 FID/loss" if "solution2" in x else "default"
+    )
     print(df_full.head())
     df = df_full[df_full["test"] == False]
     df = df.drop(columns=["test"])
@@ -1067,7 +1124,7 @@ def main():
     log.info(f"Diverse metrics: {diverse_metrics}")
     log.info(f"Balanced metrics: {balanced_metrics}")
 
-    selected_metrics = ["fid", "coverage", "precision", "distance_entropy"]
+    selected_metrics = ["fid", "coverage", "precision", "js_divergence"]
     plot_4_metrics(df, selected_metrics, eval_dir / "selected_metrics_comparison.pdf")
 
     plot_all_metrics(df, cols=5, save_path=eval_dir / "complete_metrics_comparison.pdf")
